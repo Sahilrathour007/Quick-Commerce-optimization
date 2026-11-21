@@ -184,9 +184,9 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 <!-- ================= ORDERS ================= -->
 <section class="view" id="v-orders" hidden>
   <div class="head"><div><h2>Orders</h2>
-    <p>Orders from the shop arrive here as they are placed. Each line shows the shelf to pick from. Move the order along as it is picked, packed and handed to the rider.</p></div>
+    <p>Orders from the shop arrive here as they are placed. Each line shows the shelf to pick from. Press Start packing when you begin, and Hand to rider when it leaves.</p></div>
     <a class="pill neutral" href="../QC-shop/" style="text-decoration:none">Open the shop ↗</a></div>
-  <div class="kpis" id="ordKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="kpis" id="ordKpis" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div>
   <div class="ordgrid" id="ordList"></div>
   <p class="small muted">Pick scans come from your scanner app. An order dispatched without them shows up on Scan failures as missed outbound scans.</p>
 </section>
@@ -779,14 +779,14 @@ function renderInventory(){
 // ======================================================================
 // Orders (from the shop)
 // ======================================================================
-const NEXT={placed:["picking","Start picking"], picking:["packed","Packed"], packed:["dispatched","Hand to rider"]};
-const ST_LABEL={placed:"New", picking:"Picking", packed:"Packed", dispatched:"Dispatched", cancelled:"Cancelled"};
+const NEXT={placed:["picking","Start packing"], picking:["dispatched","Hand to rider"], packed:["dispatched","Hand to rider"]};   // two steps only
+const ST_LABEL={placed:"New", picking:"Packing", packed:"Packing", dispatched:"Dispatched", cancelled:"Cancelled"};
 function renderOrders(){
   const open=S.sales_orders.filter(o=>["placed","picking","packed"].includes(o.status)).sort((a,b)=>ms(a.placed_at)-ms(b.placed_at));
   const n=st=>open.filter(o=>o.status===st).length, oldest=open.length?(NOW-ms(open[0].placed_at))/60000:0;
   const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
-  $("#ordKpis").innerHTML = k("New", n("placed"), "waiting to be picked", n("placed")?"sev-warn":"")
-    + k("Picking", n("picking"), "on the floor now") + k("Packed", n("packed"), "waiting for a rider")
+  $("#ordKpis").innerHTML = k("New", n("placed"), "waiting to be packed", n("placed")?"sev-warn":"")
+    + k("Packing", n("picking")+n("packed"), "being packed now")
     + k("Oldest open", open.length?`${Math.round(oldest)} min`:"—", "since the customer ordered", oldest>15?"sev-bad":oldest>10?"sev-warn":"sev-good");
   const avail=WMSCore.availability(S);
   $("#ordList").innerHTML = open.map(o=>{
