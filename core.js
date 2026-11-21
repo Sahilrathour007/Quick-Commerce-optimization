@@ -108,7 +108,7 @@ function buildDemo(NOW, cfg){
     const n = 95 + Math.floor(R()*35);
     const ordersToday=[];
     for(let k=0;k<n;k++){
-      const h=sampleHour(); const placed = ds + h*HOUR + R()*HOUR; if(placed>NOW) continue;
+      const h=sampleHour(); const placed = ds + h*HOUR + R()*HOUR; if(placed>NOW-25*60e3) continue;   // no open orders in demo data: the Orders tab shows only real shop orders
       ordersToday.push(placed);
     }
     ordersToday.sort((a,b)=>a-b);

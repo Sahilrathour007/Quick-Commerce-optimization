@@ -311,15 +311,15 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <div class="panel"><h3>Supabase</h3>
       <ol class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
         <li>Create a project at supabase.com.</li>
-        <li>SQL Editor → paste <span class="code">supabase/schema.sql</span> → Run.</li>
-        <li>Authentication → Users → add one user per station (e.g. in-station@yourco, out-station@yourco).</li>
+        <li>SQL Editor → paste <span class="code">supabase/schema.sql</span> → Run. Then the same for <span class="code">supabase/seed.sql</span> (products, shelves, opening stock).</li>
+        <li>Authentication → Users → Add user → Create new user (tick Auto Confirm). Use that email and password below.</li>
         <li>Project Settings → API → copy the Project URL and the anon public key below.</li>
       </ol>
       <label class="f">Project URL<input type="text" id="sbUrl" placeholder="https://xxxx.supabase.co"></label>
       <label class="f">Anon public key<input type="password" id="sbKey" placeholder="eyJhbGciOi…"></label>
       <label class="f">Station login email<input type="email" id="sbEmail"></label>
       <label class="f">Password<input type="password" id="sbPass"></label>
-      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button id="sbSeed" disabled>Copy demo data into Supabase</button><button class="ghost" id="sbDemo">Back to demo data</button></div>
+      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button class="ghost" id="sbDemo">Back to demo data</button></div>
       <div id="sbMsg"></div>
       <p class="small muted">Inside the Claude artifact viewer, calls to outside servers are blocked, so this page can only run on demo data here. Host <span class="code">index.html</span> yourself (Vercel, Netlify, or open it from disk) to connect.</p>
     </div>
@@ -945,13 +945,13 @@ function boot(){
   $("#sbUrl").value=ls.get("shelfledger.sbUrl",""); $("#sbKey").value=ls.get("shelfledger.sbKey","");
   $("#cfgRefresh").value=String(ls.get("shelfledger.refresh",60)); $("#cfgRefresh").onchange=scheduleRefresh;
   $("#sbConnect").onclick=connectSupabase;
-  $("#sbDemo").onclick=()=>{ MODE="demo"; sb=null; S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); $("#sbSeed").disabled=true; msg("#sbMsg","info","Back on demo data."); render("setup"); };
-  $("#sbSeed").onclick=seedSupabase;
+  $("#sbDemo").onclick=()=>{ MODE="demo"; sb=null; S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); msg("#sbMsg","info","Back on demo data."); render("setup"); };
   window.addEventListener("hashchange",route);
   S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); route(); scheduleRefresh();
   // Demo link: a shop order placed in another tab of this browser shows up here at once.
   window.addEventListener("storage", e=>{ if(MODE!=="demo" || e.key!==WMSCore.SHOP_KEY) return; WMSCore.mergeShopOrders(S); reindex(); render(); });
-  setInterval(()=>{ if(location.hash==="#orders"){ NOW=Date.now(); renderOrders(); } }, 30000);
+  // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
+  setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await loadAll(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
 }
 async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; reindex(); }
 async function connectSupabase(){
@@ -963,22 +963,12 @@ async function connectSupabase(){
   try{
     sb=window.supabase.createClient(url,key);
     const email=$("#sbEmail").value.trim(), pass=$("#sbPass").value;
-    if(email){ const {error}=await sb.auth.signInWithPassword({email,password:pass}); if(error) throw new Error("Sign-in failed: "+error.message); }
-    await loadAll(); MODE="supabase"; $("#sbSeed").disabled=false;
-    msg("#sbMsg","ok",`Connected. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database is empty: use Copy demo data, or load your own SKUs and shelves."}`);
+    if(!email||!pass) throw new Error("Enter the email and password of the user you created in Authentication → Users. Without signing in, the database hides every row.");
+    const {error}=await sb.auth.signInWithPassword({email,password:pass}); if(error) throw new Error("Sign-in failed: "+error.message);
+    await loadAll(); MODE="supabase";
+    msg("#sbMsg","ok",`Connected. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database has no products yet: run supabase/seed.sql in the SQL Editor, then connect again."}`);
     render("setup");
   }catch(e){ sb=null; MODE="demo"; msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" (This happens inside the Claude viewer, which blocks outside servers. Host the file yourself.)":"")); }
-}
-async function seedSupabase(){
-  if(MODE!=="supabase") return;
-  const D=WMSCore.buildDemo(Date.now(), cfg); msg("#sbMsg","info","Copying demo data…");
-  try{
-    for(const t of ["skus","locations","purchase_orders","po_lines","sales_orders","order_lines","customer_returns","scan_events"]){
-      const rows = t==="scan_events" ? D[t].map(({id,...r})=>r) : D[t];
-      for(let i=0;i<rows.length;i+=500){ const {error}=await sb.from(t).upsert(rows.slice(i,i+500)); if(error) throw new Error(t+": "+error.message); }
-    }
-    await connectSupabase();
-  }catch(e){ msg("#sbMsg","err",esc(e.message)); }
 }
 boot();
 </script>
