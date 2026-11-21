@@ -158,6 +158,9 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:.85rem}
 .kv dt{color:var(--muted)} .kv dd{margin:0;font-weight:500}
 .skucard{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.rategrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.rategrid input{width:100%}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -175,6 +178,8 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <a href="#reorder">Movers &amp; reorder</a>
     <a href="#relocate">Relocation</a>
     <a href="#failures">Scan failures</a>
+    <a href="#pnl">P&amp;L</a>
+    <a href="#costs">Costs</a>
   </nav>
 </div></header>
 
@@ -228,6 +233,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     </div>
   </div>
   <div class="kpis" id="invKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div id="invForms" style="margin-bottom:14px"></div>
   <div class="panel"><h3>Stock by SKU <span class="pill neutral" id="invN"></span></h3>
     <p class="small muted">Book = received + sellable returns − dispatched. Shelf = scanned in − scanned out. When they differ, a scan was missed. Click a column to sort; click a shelf to open it on the map.</p>
     <div class="tw"><table><thead><tr id="invHead"></tr></thead><tbody id="invBody"></tbody></table></div></div>
@@ -247,7 +253,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
   <div class="grid2">
     <div class="panel"><h3>Best movers <span class="pill neutral" id="roBestN"></span></h3>
       <p class="small muted">The few SKUs that make 80% of units sold. They belong in zone A, nearest the pack bench.</p>
-      <div class="tw"><table><thead><tr><th>Product</th><th class="n">Units/day</th><th class="n">Share</th><th class="n">Cum.</th><th>Shelf</th></tr></thead><tbody id="roBest"></tbody></table></div></div>
+      <div class="tw"><table><thead><tr><th>Product</th><th class="n">Units/day</th><th class="n">Share of picks</th><th class="n">Cum.</th><th class="n">Profit/unit</th><th>Shelf</th></tr></thead><tbody id="roBest"></tbody></table></div></div>
     <div class="panel"><h3>Worst movers <span class="pill neutral" id="roWorstN"></span></h3>
       <p class="small muted">The tail after 95% of units. Slowest first. Stock here is cash sitting still.</p>
       <div class="tw"><table><thead><tr><th>Product</th><th class="n">Sold</th><th class="n">On hand</th><th class="n">Days of cover</th><th>Shelf</th></tr></thead><tbody id="roWorst"></tbody></table></div></div>
@@ -304,11 +310,37 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <div class="tw"><table><thead><tr><th>When</th><th>Detector</th><th>Ref</th><th>Product</th><th class="n">Expected</th><th class="n">Scanned</th><th class="n">Gap</th><th>Owner</th></tr></thead><tbody id="fLines"></tbody></table></div></div>
 </section>
 
+<!-- ================= P&L ================= -->
+<section class="view" id="v-pnl" hidden>
+  <div class="head"><div><h2>Store P&amp;L</h2>
+    <p>What this dark store earns after every cost, built from your orders and stock ledger. Each line is tagged with where its number came from.</p></div>
+    <label class="f">Period<select id="pnlWin"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="28" selected>Last 28 days</option></select></label></div>
+  <div id="pnlBanner" style="margin-bottom:14px"></div>
+  <div class="kpis" id="pnlKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="panel"><h3>Profit and loss</h3>
+    <div class="tw"><table><thead><tr><th>Line</th><th class="n">Period</th><th class="n">Per order</th><th class="n">% of revenue</th><th>Source</th></tr></thead><tbody id="pnlTable"></tbody></table></div></div>
+  <div class="panel"><h3>Contribution by basket size</h3><p class="small muted" style="margin:4px 0 8px">Rider, bag and payment costs do not shrink with a small basket, so small baskets lose money first.</p>
+    <div class="tw"><table><thead><tr><th>Basket</th><th class="n">Orders</th><th class="n">Avg basket</th><th class="n">Gross profit / order</th><th class="n">Contribution / order</th><th class="n">Orders losing money</th></tr></thead><tbody id="pnlBands"></tbody></table></div></div>
+  <div class="panel"><h3>Inventory cost and expiry</h3><div id="pnlInv"></div>
+    <div class="grid2"><div><h4 style="margin:0 0 6px;font-size:.85rem;color:var(--ink-2)">Will not sell before expiry (top 15)</h4><div class="tw"><table><thead><tr><th>Product</th><th class="n">On hand</th><th class="n">Sales/day</th><th class="n">Shelf life</th><th class="n">Days of cover</th><th class="n">At risk (units)</th><th class="n">At cost</th></tr></thead><tbody id="pnlExp"></tbody></table></div></div>
+    <div><h4 style="margin:0 0 6px;font-size:.85rem;color:var(--ink-2)">Recent write-offs</h4><div class="tw"><table><thead><tr><th>When</th><th>Product</th><th>Reason</th><th class="n">Units</th><th class="n">At cost</th></tr></thead><tbody id="pnlWo"></tbody></table></div></div></div></div>
+  <div class="panel"><h3>Profit by product</h3><p class="small muted" style="margin:4px 0 8px">Gross profit after GST and cost of goods. "Per litre of stock" is profit per day per litre of shelf the product occupies now: the figure that decides who earns a slot.</p>
+    <div class="tw"><table><thead><tr><th>Product</th><th>Category</th><th class="n">Units</th><th class="n">Gross profit</th><th class="n">Per unit</th><th class="n">Margin</th><th class="n">Discount</th><th class="n">₹/day per litre of stock</th></tr></thead><tbody id="pnlProd"></tbody></table></div></div>
+</section>
+
+<!-- ================= COSTS ================= -->
+<section class="view" id="v-costs" hidden>
+  <div class="head"><div><h2>Costs</h2><p>Every number the P&amp;L uses. Change any of them, add your own cost lines, set a discount on a product.</p></div></div>
+  <div id="costsBody"></div>
+</section>
+
 <!-- ================= SETUP ================= -->
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="core.js"></script>
+<script src="costs.js"></script>
+<script src="pnl.js"></script>
 <script>
 "use strict";
 // ======================================================================
@@ -333,7 +365,7 @@ const ms = v => typeof v === "number" ? v : Date.parse(v);
 const SUPABASE_URL = "https://ugoobcnusxmvdghghhtt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnb29iY251c3htdmRnaGdoaHR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0Mzk4MTksImV4cCI6MjEwODAxNTgxOX0.qkZFtNaagypy3aDo2ZvhvqiXx-GyrerwS-WBm4ZfHeA";
 let MODE = "offline", sb = null, WHO = "";   // "offline" = not signed in: no data shown, ever. No demo data.
-const EMPTY = () => ({skus:[],locations:[],purchase_orders:[],po_lines:[],sales_orders:[],order_lines:[],customer_returns:[],scan_events:[],cycle_counts:[]});
+const EMPTY = () => ({skus:[],locations:[],purchase_orders:[],po_lines:[],sales_orders:[],order_lines:[],customer_returns:[],scan_events:[],cycle_counts:[],sku_costs:[],cost_rates:[],cost_lines:[],bag_types:[],write_offs:[]});
 let S = {};               // tables
 let I = {};               // indexes
 let NOW = Date.now();
@@ -371,6 +403,8 @@ function bookQty(sku_id){
   for(const l of S.po_lines) if(l.sku_id===sku_id && l.qty_received!=null) q+=l.qty_received;
   for(const r of S.customer_returns) if(r.sku_id===sku_id && r.condition==="sellable") q+=r.qty;
   for(const l of S.order_lines) if(l.sku_id===sku_id && I.order.get(l.order_id)?.status==="dispatched") q-=l.qty;
+  for(const w of (S.write_offs||[])) if(w.sku_id===sku_id) q-=w.qty;                                   // damaged / expired
+  for(const c of (S.cycle_counts||[])) if(c.sku_id===sku_id) q+=c.counted_qty-c.system_qty;            // count corrections
   return q;
 }
 
@@ -574,27 +608,33 @@ const ZV = {"0.9":1.28,"0.95":1.65,"0.98":2.05,"0.99":2.33};
 function analyse(){
   const W=RO.window, z=ZV[String(RO.service)]||1.65;
   const today=new Date(NOW); today.setHours(0,0,0,0); const end=today.getTime(), first=end-W*DAY;   // W full days, today excluded
-  const daily=new Map(S.skus.map(s=>[s.sku_id,new Array(W).fill(0)]));
+  const daily=new Map(S.skus.map(s=>[s.sku_id,new Array(W).fill(0)])), lineCnt=new Map();
   for(const o of S.sales_orders){ if(o.status==="cancelled") continue; const t=ms(o.placed_at); if(t<first||t>=end) continue;
-    const di=Math.floor((t-first)/DAY); for(const l of (I.linesByOrder.get(o.order_id)||[])) { const d=daily.get(l.sku_id); if(d) d[di]+=l.qty; } }
+    const di=Math.floor((t-first)/DAY); for(const l of (I.linesByOrder.get(o.order_id)||[])) { const d=daily.get(l.sku_id); if(d){ d[di]+=l.qty; lineCnt.set(l.sku_id,(lineCnt.get(l.sku_id)||0)+1); } } }
+  // lead time measured from your own purchase orders (ordered_at to received_at)
+  const leadAcc=new Map(); for(const l of S.po_lines){ const po=I.po.get(l.po_id); if(!po||!po.received_at||!po.ordered_at||l.qty_received==null) continue; const dd=(ms(po.received_at)-ms(po.ordered_at))/DAY; if(!(dd>=0)) continue; const a=leadAcc.get(l.sku_id)||{t:0,n:0}; a.t+=dd; a.n++; leadAcc.set(l.sku_id,a); }
   const book=new Map(S.skus.map(s=>[s.sku_id,0])), onOrder=new Map(S.skus.map(s=>[s.sku_id,0]));
   for(const l of S.po_lines){ if(!book.has(l.sku_id)) continue; if(l.qty_received!=null) book.set(l.sku_id,book.get(l.sku_id)+l.qty_received); else onOrder.set(l.sku_id,onOrder.get(l.sku_id)+l.qty_ordered); }
   for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id,book.get(r.sku_id)+r.qty);
   for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id,book.get(l.sku_id)-l.qty);
+  for(const w of (S.write_offs||[])) if(book.has(w.sku_id)) book.set(w.sku_id,book.get(w.sku_id)-w.qty);
+  for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id,book.get(c.sku_id)+c.counted_qty-c.system_qty);
   const rows=S.skus.map(s=>{
     const d=daily.get(s.sku_id), units=d.reduce((a,b)=>a+b,0), avg=units/W;
     const sd=Math.sqrt(d.reduce((a,b)=>a+(b-avg)**2,0)/Math.max(1,W-1));
-    const L = s.lead_time_days!=null ? +s.lead_time_days : RO.lead;
+    const la=leadAcc.get(s.sku_id), L = s.lead_time_days!=null ? +s.lead_time_days : la ? Math.max(0.1,la.t/la.n) : RO.lead, leadSrc = s.lead_time_days!=null ? "set" : la ? "measured" : "default";
     const ss=Math.ceil(z*sd*Math.sqrt(L)), rop=Math.ceil(avg*L)+ss, upTo=Math.ceil(avg*(L+1))+ss;   // reviewed daily
     const onHand=book.get(s.sku_id), oo=onOrder.get(s.sku_id), pos=onHand+oo;
-    const order = pos<=rop ? Math.max(0, upTo-pos) : 0;
+    let order = pos<=rop ? Math.max(0, upTo-pos) : 0;
+    const kc=QCCost.skuCost(s, PNL.costRow(s.sku_id)); let capped=false;
+    if(order>0 && avg>0){ const cap=Math.floor(avg*kc.shelf); if(pos+order>cap){ order=Math.max(0,cap-pos); capped=true; } }   // never order more than can sell before it expires
     const status = onHand<=0 ? "out" : pos<=rop ? "order" : "ok";
     const home=homeOf(s.sku_id), zone=home ? I.loc.get(home).zone : null;
-    return {sku:s, units, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
-  }).sort((a,b)=>b.units-a.units);
-  const tot=rows.reduce((a,r)=>a+r.units,0)||1; let cum=0;
-  const anySales=rows.some(r=>r.units>0);
-  for(const r of rows){ r.share=r.units/tot; r.cls = !anySales ? "—" : r.units===0 ? "C" : cum<0.8 ? "A" : cum<0.95 ? "B" : "C"; cum+=r.share; r.cum=cum; }   // no sales yet = no class
+    return {sku:s, units, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
+  }).sort((a,b)=>b.lines-a.lines || b.gpu-a.gpu);   // pick lines drive effort (Christopher ch.3); margin breaks ties
+  const tot=rows.reduce((a,r)=>a+r.lines,0)||1; let cum=0;
+  const anySales=rows.some(r=>r.lines>0);
+  for(const r of rows){ r.share=r.lines/tot; r.cls = !anySales ? "—" : r.lines===0 ? "C" : cum<0.8 ? "A" : cum<0.95 ? "B" : "C"; cum+=r.share; r.cum=cum; }   // no sales yet = no class
   for(const r of rows){
     const special = r.sku.temp_class!=="ambient" || r.sku.unit_weight_kg>=4;
     r.advice = special||!r.zone ? null : (r.cls==="A" && (r.zone==="B"||r.zone==="C")) ? "Move to zone A" : (r.cls==="C" && r.zone==="A") ? "Move out of zone A" : null;
@@ -613,15 +653,15 @@ function renderReorder(){
     + k("Out of stock", `${out.length} ${pl(out.length)}`, "nothing left to sell", out.length?"sev-bad":"sev-good");
   const shelf=r=>`${r.home?locChip(r.home):'<span class="pill bad">no shelf</span>'}${r.advice?` <span class="pill warn">${r.advice}</span>`:""}`;
   $("#roBestN").textContent=best.length; $("#roWorstN").textContent=worst.length;
-  $("#roBest").innerHTML=best.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">${fmtPct(r.share)}</td><td class="n">${fmtPct(r.cum)}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No sales yet. Best movers appear once orders come in.</td></tr>`;
+  $("#roBest").innerHTML=best.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">${fmtPct(r.share)}</td><td class="n">${fmtPct(r.cum)}</td><td class="n">₹${r.gpu.toFixed(1)}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No sales yet. Best movers appear once orders come in.</td></tr>`;
   $("#roWorst").innerHTML=worst.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.units}</td><td class="n">${r.onHand}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(0):"no sales"}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No SKUs in the tail.</td></tr>`;
   const rank={out:0,order:1,ok:2};
   const all=rows.slice().sort((a,b)=>rank[a.status]-rank[b.status] || a.daysLeft-b.daysLeft);
   $("#roOrderN").textContent=`${need.length} to order`;
   const pill={out:'<span class="pill bad">Out of stock</span>', order:'<span class="pill warn">Order now</span>', ok:'<span class="pill good">OK</span>'};
   $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">±${r.sd.toFixed(1)}</td>
-    <td class="n"><input type="number" class="lt" data-sku="${esc(r.sku.sku_id)}" value="${r.ownLead?r.L:""}" placeholder="${RO.lead}" min="0" step="0.5" style="width:70px;text-align:right;padding:4px 6px" aria-label="Lead time for ${esc(r.sku.name)}"></td>
-    <td class="n">${r.ss}</td><td class="n"><b>${r.rop}</b></td><td class="n">${r.onHand}</td><td class="n">${r.onOrder||""}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(1):"—"}</td><td class="n"><b>${r.order||""}</b></td><td>${pill[r.status]}</td></tr>`).join("");
+    <td class="n"><input type="number" class="lt" data-sku="${esc(r.sku.sku_id)}" value="${r.ownLead?r.L:""}" placeholder="${r.leadSrc==='measured'?r.L.toFixed(1)+' measured':RO.lead}" min="0" step="0.5" style="width:70px;text-align:right;padding:4px 6px" aria-label="Lead time for ${esc(r.sku.name)}"></td>
+    <td class="n">${r.ss}</td><td class="n"><b>${r.rop}</b></td><td class="n">${r.onHand}</td><td class="n">${r.onOrder||""}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(1):"—"}</td><td class="n"><b>${r.order||""}</b>${r.capped?' <span class="pill warn">capped by shelf life</span>':""}</td><td>${pill[r.status]}</td></tr>`).join("");
 }
 async function setLeadTime(sku_id, raw){
   const v = raw==="" ? null : Math.max(0, +raw);
@@ -656,6 +696,11 @@ function planRelocation(){
   cands.sort((a,b)=>a.pri-b.pri || (a.pri===1 ? b.r.avg-a.r.avg : a.r.avg-b.r.avg));
   const fit=(L,s)=>{ const o=get(L.code); if(o.items.some(i=>i.sku_id!==s.sku_id && i.qty>0)) return 0;
     const u=unitVol(s).v, w=+s.unit_weight_kg||0.01; return Math.max(0,Math.floor(Math.min((L.capacity_cm3-o.vol)/u,(L.max_weight_kg-o.kg)/w))); };
+  const reserveFor=(s,q)=>{ const u=unitVol(s).v, w=+s.unit_weight_kg||0.01;
+    for(const L of S.locations.filter(L=>L.is_active&&L.is_reserve&&L.temp_class===s.temp_class).sort((a,b)=>a.code.localeCompare(b.code))){ const o=get(L.code);
+      if(o.items.some(i=>i.sku_id!==s.sku_id&&i.qty>0)) continue;
+      if(o.vol+q*u<=L.capacity_cm3 && o.kg+q*w<=L.max_weight_kg){ o.vol+=q*u; o.kg+=q*w; const t=o.items.find(i=>i.sku_id===s.sku_id); if(t) t.qty+=q; else o.items.push({sku_id:s.sku_id,qty:q}); return L.code; } }
+    return null; };
   const levelPref=(cls,sh)=> cls==="A" ? ({B:0,C:1,A:2,D:3}[sh]??4) : ({D:0,A:1,C:2,B:3}[sh]??4);
   const moves=[];
   const apply=(s,from,to,q)=>{ const u=unitVol(s).v, w=+s.unit_weight_kg||0;
@@ -672,7 +717,8 @@ function planRelocation(){
     if(!d){ moves.push({...c, s, onShelf, qty:0, to:null, blocked:`No free slot in zone ${c.tz}. Free space there first.`}); continue; }
     const q=Math.min(onShelf,d.f); apply(s,c.from,d.L.code,q);
     if(q<onShelf){ const f=get(c.from), u=unitVol(s).v, w=+s.unit_weight_kg||0; f.vol-=(onShelf-q)*u; f.kg-=(onShelf-q)*w; const fi=f.items.find(i=>i.sku_id===s.sku_id); if(fi) fi.qty-=onShelf-q; }
-    moves.push({...c, s, onShelf, qty:q, to:d.L.code, reserve:onShelf-q});
+    const metres=(I.loc.get(c.from).walk_m-d.L.walk_m)*c.r.lines/RO.window;
+    moves.push({...c, s, onShelf, qty:q, to:d.L.code, reserve:onShelf-q, reserveTo:onShelf-q>0?reserveFor(s,onShelf-q):null, metres, why:c.why+` · ${metres>=0?"saves":"adds"} ${Math.abs(Math.round(metres))} m of walking a day`});
   }
   // Split overfull slots that the zone moves did not already fix
   for(const x of over){
@@ -682,7 +728,7 @@ function planRelocation(){
     const excess=Math.ceil(Math.max((o.vol-L.capacity_cm3)/u,(o.kg-L.max_weight_kg)/w));
     const why=`Slot over its ${o.kg>L.max_weight_kg?"weight":"space"} limit`;
     const q=Math.min(it.qty,excess); o.vol-=q*u; o.kg-=q*w; it.qty-=q;
-    moves.push({r, s, from:L.code, onShelf:it.qty+q, qty:q, to:"RESERVE", why});
+    moves.push({r, s, from:L.code, onShelf:it.qty+q, qty:q, to:reserveFor(s,q)||"RESERVE", why});
   }
   for(const m of moves){ if(!m.to) continue; const u=unitVol(m.s); m.vol=m.qty*u.v/1000; m.est=u.est; m.kg=m.qty*(+m.s.unit_weight_kg||0); if(m.to==="RESERVE") continue; const L=I.loc.get(m.to), o=get(m.to); m.pv=o.vol/L.capacity_cm3; m.pk=o.kg/L.max_weight_kg; }
   return {moves, over};
@@ -698,7 +744,7 @@ function renderRelocate(){
     + k("Slots over weight", overK, "Heavier than the shelf is rated for", overK?"sev-bad":"sev-good");
   $("#rlN").textContent=P.moves.length;
   $("#rlBody").innerHTML = P.moves.map((m,i)=>`<tr><td>${i+1}</td><td>${esc(m.s.name)}</td><td>${m.r?.cls||"—"}</td><td class="n">${m.r?m.r.avg.toFixed(1):"—"}</td><td>${locChip(m.from)}</td><td class="n">${m.onShelf}</td>
-    <td class="n"><b>${m.qty||"—"}</b>${m.reserve?`<br><span class="small muted">+${m.reserve} to reserve</span>`:""}</td><td>${m.to==="RESERVE"?'<span class="pill neutral">Reserve</span>':m.to?locChip(m.to):'<span class="pill bad">no room</span>'}</td>
+    <td class="n"><b>${m.qty||"—"}</b>${m.reserve?`<br><span class="small muted">+${m.reserve} to reserve${m.reserveTo?" "+esc(m.reserveTo):""}</span>`:""}</td><td>${m.to==="RESERVE"?'<span class="pill neutral">Reserve</span>':m.to?locChip(m.to):'<span class="pill bad">no room</span>'}</td>
     <td class="n">${m.to?`${m.vol.toFixed(1)} L${m.est?' <span class="pill warn">est.</span>':""}`:""}</td><td class="n">${m.to?m.kg.toFixed(1)+" kg":""}</td>
     <td>${m.to==="RESERVE"?'<span class="small muted">Back stock, refills this slot</span>':m.to?`<div class="small muted">space</div>${fillBar(m.pv)}<div class="small muted">weight</div>${fillBar(m.pk)}`:`<span class="small">${esc(m.blocked)}</span>`}</td><td class="small">${esc(m.why)}</td></tr>`).join("") || `<tr><td colspan="12" class="muted">Nothing to move. Every SKU is in its zone and every slot is within its limits.</td></tr>`;
   $("#rlOverN").textContent=P.over.length;
@@ -713,6 +759,7 @@ function renderRelocate(){
 const INV={sort:"status", dir:1};
 const INV_COLS=[["name","Product"],["category","Category"],["cls","Class"],["book","Book",1],["shelf","Shelf",1],["onOrder","On order",1],["avg","Sales/day",1],["days","Days of cover",1],["rop","Reorder point",1],["litres","Space",1],["kg","Weight",1],["where","Where it is"],["last","Last moved"],["status","Status"]];
 function renderInventory(){
+  PNL.invForms();
   const cats=[...new Set(S.skus.map(s=>s.category))].sort(), cs=$("#invCat"), cur=cs.value;
   cs.innerHTML=`<option value="">All</option>`+cats.map(c=>`<option>${esc(c)}</option>`).join(""); cs.value=cats.includes(cur)?cur:"";
   const an=analyse(), q=$("#invQ").value.trim().toLowerCase(), cat=cs.value, st=$("#invSt").value;
@@ -764,21 +811,25 @@ function renderOrders(){
   $("#ordList").innerHTML = open.map(o=>{
     const age=Math.round((NOW-ms(o.placed_at))/60000), lines=(I.linesByOrder.get(o.order_id)||[]).map(l=>{
       const st=(I.stockBySku.get(l.sku_id)||[]).filter(r=>r.qty>0), s=I.sku.get(l.sku_id);
-      return {l, s, loc: st.length?st[0].location_code:null, walk: st.length?I.loc.get(st[0].location_code).walk_m:999, short: (avail.get(l.sku_id)??0)<0}; }).sort((a,b)=>a.walk-b.walk);
+      const sc=I.byRef.get("PICK|"+o.order_id+"|"+l.sku_id)||0, fe=PNL.nextExpiry(l.sku_id);
+      return {l, s, sc, fe, loc: st.length?st[0].location_code:null, walk: st.length?I.loc.get(st[0].location_code).walk_m:999, short: (avail.get(l.sku_id)??0)<0}; }).sort((a,b)=>((a.s?.temp_class&&a.s.temp_class!=="ambient")-(b.s?.temp_class&&b.s.temp_class!=="ambient"))||(a.walk-b.walk));   // cold and frozen last so they stay cold
     const nx=NEXT[o.status];
     return `<div class="panel ordcard"><div class="row" style="justify-content:space-between;align-items:center">
         <div><b class="code" style="font-size:.95rem;color:var(--ink)">${esc(o.order_id)}</b> <span class="pill ${o.source==="shop"?"live":"neutral"}">${o.source==="shop"?"Shop":"OMS"}</span></div>
         <span class="pill ${age>15?"bad":age>10?"warn":"good"}">${age} min</span></div>
       ${o.customer_name?`<p class="small">${esc(o.customer_name)} · <span class="muted">${esc(o.address||"")}</span></p>`:""}
       <div class="tw"><table><thead><tr><th>Pick from</th><th>Product</th><th class="n">Qty</th></tr></thead><tbody>
-        ${lines.map(x=>`<tr><td>${x.loc?locChip(x.loc):'<span class="pill bad">no shelf</span>'}</td><td>${esc(x.s?.name||x.l.sku_id)}${x.short?' <span class="pill bad">short</span>':""}</td><td class="n"><b>${x.l.qty}</b></td></tr>`).join("")}
+        ${lines.map(x=>`<tr><td>${x.loc?locChip(x.loc):'<span class="pill bad">no shelf</span>'}</td><td>${esc(x.s?.name||x.l.sku_id)}${x.fe?` <span class="small muted">take the batch expiring ${esc(x.fe)}</span>`:""}${x.short?' <span class="pill bad">short</span>':""}</td><td class="n"><b>${x.l.qty}</b><br><span class="pill ${x.sc>=x.l.qty?"good":"warn"}">${x.sc}/${x.l.qty} scanned</span>${x.sc<x.l.qty&&x.loc?` <button class="ghost" data-pickscan="${esc(o.order_id)}|${esc(x.l.sku_id)}|${x.l.qty-x.sc}|${esc(x.loc)}">Record</button>`:""}</td></tr>`).join("")}
       </tbody></table></div>
+      ${PNL.orderLine(o)}
       <div class="row" style="justify-content:space-between;align-items:center"><span class="pill neutral">${ST_LABEL[o.status]}</span>${o.total_inr?`<span class="small">₹${fmtN(o.total_inr)}</span>`:""}
-        <button class="primary" data-advance="${esc(o.order_id)}" data-to="${nx[0]}">${nx[1]}</button></div></div>`;
+        <button class="primary" data-advance="${esc(o.order_id)}" data-to="${nx[0]}" ${nx[0]==="dispatched"&&lines.some(x=>x.sc<x.l.qty)?'disabled title="Every line must be scanned out first"':""}>${nx[1]}</button></div></div>`;
   }).join("") || `<div class="panel"><p class="muted">No open orders. New shop orders appear here as soon as they are placed.</p></div>`;
 }
 async function setOrderStatus(id, status){
   const o=I.order.get(id); if(!o) return;
+  if(status==="dispatched"){ const miss=(I.linesByOrder.get(id)||[]).filter(l=>(I.byRef.get("PICK|"+id+"|"+l.sku_id)||0)<l.qty);
+    if(miss.length){ alert2("Cannot hand "+id+" to the rider: "+miss.length+" line(s) have no pick scan. Scan them out first (mistake-proofing: the error cannot pass to the next step)."); return; } }
   const patch={status}; if(status==="dispatched") patch.dispatched_at=new Date().toISOString();
   if(MODE==="supabase"){ const {data,error}=await sb.from("sales_orders").update(patch).eq("order_id",id).select(); if(error||!data?.length){ alert2("Could not update the order: "+(error?.message||"the database refused the change. Run supabase/open-access.sql.")); return; } }
   Object.assign(o,patch);
@@ -877,7 +928,7 @@ function barChart(host, tip, data){
 // ======================================================================
 // Routing & events
 // ======================================================================
-const VIEWS=["orders","map","inventory","reorder","relocate","failures"];
+const VIEWS=["orders","map","inventory","reorder","relocate","failures","pnl","costs"];
 function route(){
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map";
   for(const n of VIEWS) $("#v-"+n).hidden = n!==v;
@@ -889,7 +940,7 @@ function render(v){
   const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
   $("#modePill").className="pill "+(MODE==="supabase"?"live":"bad"); $("#modePill").textContent = MODE==="supabase" ? "Supabase · live" : "Not connected";
   $("#offlineBar").hidden = MODE==="supabase" && S.skus.length>0;
-  if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures();
+  if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures(); else if(v==="pnl") PNL.renderPnl(); else if(v==="costs") PNL.renderCosts();
 }
 function focusSlot(code){
   MAP.sel=code; if(location.hash!=="#map"){ location.hash="#map"; } else renderMap();
@@ -919,11 +970,11 @@ function boot(){
   document.addEventListener("change",e=>{ const lt=e.target.closest("input.lt"); if(lt) setLeadTime(lt.dataset.sku, lt.value.trim()); });
   $("#fPer").onchange=renderFailures;
   window.addEventListener("hashchange",route);
-  S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
+  PNL.init(); S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
   setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await loadAll(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
 }
-async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; reindex(); }
+async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; await PNL.loadOpt(); reindex(); }
 // On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
 async function autoConnect(){
   const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;

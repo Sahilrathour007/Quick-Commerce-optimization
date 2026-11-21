@@ -39,3 +39,22 @@ Warehouse management for a quick-commerce dark store: **Shelf Ledger**. One web 
 - No offline queue for scans.
 - RLS lets any signed-in user read and write. Tighten it per role before a second store joins.
 - No cycle-count screen yet. Book and shelf stock drift apart until someone counts.
+
+## P&L and costs (added)
+
+New files: `costs.js` (cost model), `pnl.js` (P&L, Costs tab, damaged/expired and count forms), `supabase/costs.sql` (cost tables).
+
+1. Run `supabase/costs.sql` in the Supabase SQL Editor. Cost tables are readable by signed-in staff only; they are not covered by `open-access.sql`.
+2. Open the **Costs** tab and replace every number tagged `assumed` with an invoice, payslip or rent agreement figure.
+3. Without signing in, cost edits stay in the browser. Damaged/expired and count records write to the ledger, so they need sign-in.
+4. Every P&L line carries a source tag: ledger, entered, research, assumed. The banner shows how much of the cost stack is measured.
+
+## Review fixes (added)
+
+- **Scan gate:** "Hand to rider" is disabled until every line has a PICK scan. A signed-in user can record a missing pick scan from the order card.
+- **Cold last:** pick lists put cold and frozen items last.
+- **Reserve shelves:** run `supabase/reserve.sql`; relocation moves now name a real reserve address and show metres of walking saved or added per day.
+- **Ranking:** movers are ranked by pick lines, with profit per unit as the tie-break.
+- **Lead time:** measured from purchase orders (ordered_at to received_at) when a SKU has any; a typed lead time still wins.
+- **Expiry:** `po_lines.expiry_date` (in costs.sql). Order cards show which batch to take first. Order quantity is capped at what can sell before expiry.
+- **Not done:** dashboards still download full tables (scale limit), and stock-out censored demand is not corrected.
