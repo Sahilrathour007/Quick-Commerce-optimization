@@ -175,12 +175,11 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <a href="#reorder">Movers &amp; reorder</a>
     <a href="#relocate">Relocation</a>
     <a href="#failures">Scan failures</a>
-    <a href="#setup">Sign in</a>
   </nav>
 </div></header>
 
 <main class="wrap">
-<div id="offlineBar" class="msg warn" hidden style="margin-bottom:18px"><span class="ic">!</span><span>Not connected, so nothing is shown. <a href="#setup">Sign in</a> to load your store's data.</span></div>
+<div id="offlineBar" class="msg warn" hidden style="margin-bottom:18px"><span class="ic">!</span><span id="offlineTxt">Connecting to the store database…</span></div>
 
 <!-- ================= ORDERS ================= -->
 <section class="view" id="v-orders" hidden>
@@ -306,18 +305,6 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 </section>
 
 <!-- ================= SETUP ================= -->
-<section class="view" id="v-setup" hidden>
-  <div class="panel" style="max-width:440px;width:100%">
-    <h3>Sign in</h3>
-    <p class="small muted" id="whoami">Sign in with your staff account to load the store's data.</p>
-    <form id="loginForm" class="view" style="gap:12px">
-      <label class="f">Email<input type="email" id="sbEmail" autocomplete="username" required></label>
-      <label class="f">Password<input type="password" id="sbPass" autocomplete="current-password" required></label>
-      <div class="row"><button class="primary" id="sbConnect" type="submit">Sign in</button><button class="ghost" id="sbOut" type="button">Sign out</button></div>
-    </form>
-    <div id="sbMsg"></div>
-  </div>
-</section>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -638,7 +625,7 @@ function renderReorder(){
 }
 async function setLeadTime(sku_id, raw){
   const v = raw==="" ? null : Math.max(0, +raw);
-  if(MODE==="supabase"){ const {error}=await sb.from("skus").update({lead_time_days:v}).eq("sku_id",sku_id); if(error){ msg("#sbMsg","err",esc(error.message)); return; } }
+  if(MODE==="supabase"){ const {data,error}=await sb.from("skus").update({lead_time_days:v}).eq("sku_id",sku_id).select(); if(error||!data?.length){ alert2("Could not save the lead time: "+(error?.message||"the database refused the change. Run supabase/open-access.sql.")); return; } }
   const s=I.sku.get(sku_id); if(s) s.lead_time_days=v; renderReorder();
 }
 
@@ -790,7 +777,7 @@ function renderOrders(){
 async function setOrderStatus(id, status){
   const o=I.order.get(id); if(!o) return;
   const patch={status}; if(status==="dispatched") patch.dispatched_at=new Date().toISOString();
-  if(MODE==="supabase"){ const {error}=await sb.from("sales_orders").update(patch).eq("order_id",id); if(error){ msg("#sbMsg","err",esc(error.message)); return; } }
+  if(MODE==="supabase"){ const {data,error}=await sb.from("sales_orders").update(patch).eq("order_id",id).select(); if(error||!data?.length){ alert2("Could not update the order: "+(error?.message||"the database refused the change. Run supabase/open-access.sql.")); return; } }
   Object.assign(o,patch);
   if(o.source==="shop"){ const list=WMSCore.loadShopOrders(); const so=list.find(x=>x.order_id===id); if(so){ Object.assign(so,patch); WMSCore.saveShopOrders(list); } }
   reindex(); render();
@@ -887,7 +874,7 @@ function barChart(host, tip, data){
 // ======================================================================
 // Routing & events
 // ======================================================================
-const VIEWS=["orders","map","inventory","reorder","relocate","failures","setup"];
+const VIEWS=["orders","map","inventory","reorder","relocate","failures"];
 function route(){
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map";
   for(const n of VIEWS) $("#v-"+n).hidden = n!==v;
@@ -898,8 +885,7 @@ function render(v){
   v = v || (VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map");
   const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
   $("#modePill").className="pill "+(MODE==="supabase"?"live":"bad"); $("#modePill").textContent = MODE==="supabase" ? "Supabase · live" : "Not connected";
-  $("#offlineBar").hidden = MODE==="supabase" || v==="setup";
-  $("#whoami").textContent = MODE==="supabase" ? `Signed in as ${WHO||"staff"}.` : "Sign in with your staff account to load the store's data.";
+  $("#offlineBar").hidden = MODE==="supabase" && S.skus.length>0;
   if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures();
 }
 function focusSlot(code){
@@ -929,8 +915,6 @@ function boot(){
   ["#roWin","#roLead","#roSvc"].forEach(id=>$(id).addEventListener("change",roSave));
   document.addEventListener("change",e=>{ const lt=e.target.closest("input.lt"); if(lt) setLeadTime(lt.dataset.sku, lt.value.trim()); });
   $("#fPer").onchange=renderFailures;
-  $("#loginForm").addEventListener("submit",e=>{ e.preventDefault(); connectSupabase(); });
-  $("#sbOut").onclick=async()=>{ try{ await sb?.auth.signOut(); }catch(e){} MODE="offline"; WHO=""; S=EMPTY(); reindex(); msg("#sbMsg","info","Signed out. Nothing is shown until someone signs in."); render("setup"); };
   window.addEventListener("hashchange",route);
   S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
@@ -940,25 +924,13 @@ async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fe
 // On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
 async function autoConnect(){
   const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
-  if(!url||!key||!window.supabase) return;
-  try{ sb=window.supabase.createClient(url,key); const {data}=await sb.auth.getSession(); if(!data?.session) return; WHO=data.session.user?.email||"";
-    await loadAll(); MODE="supabase"; render(); }catch(e){ MODE="offline"; }
+  if(!url||!key||!window.supabase){ $("#offlineTxt").textContent="Could not reach the store database. Check your internet connection and reload."; return; }
+  // No sign-in for now: reads with the public key. Works only after supabase/open-access.sql has been run.
+  try{ sb=window.supabase.createClient(url,key); await loadAll(); MODE="supabase";
+    if(!S.skus.length) $("#offlineTxt").textContent="Connected, but the database shows no products. Run supabase/open-access.sql (and seed.sql if you have not) in the Supabase SQL Editor, then reload.";
+    render(); }catch(e){ MODE="offline"; $("#offlineTxt").textContent="Could not reach the store database. Check your internet connection and reload."; render(); }
 }
-async function connectSupabase(){
-  const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
-  if(!window.supabase){ msg("#sbMsg","err","The Supabase library did not load. Check the network, then reload."); return; }
-  ls.set("shelfledger.sbUrl",url); ls.set("shelfledger.sbKey",key);
-  msg("#sbMsg","info","Connecting…");
-  try{
-    sb=window.supabase.createClient(url,key);
-    const email=$("#sbEmail").value.trim(), pass=$("#sbPass").value;
-    if(!email||!pass) throw new Error("Enter your email and password.");
-    const {error}=await sb.auth.signInWithPassword({email,password:pass}); if(error) throw new Error("Sign-in failed: "+error.message);
-    await loadAll(); MODE="supabase"; WHO=email; $("#sbPass").value="";
-    msg("#sbMsg","ok",`Signed in as ${esc(email)}. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database has no products yet."}`);
-    render("setup");
-  }catch(e){ sb=null; MODE="offline"; S=EMPTY(); reindex(); render("setup"); msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" Could not reach the database. Check your internet connection.":"")); }
-}
+function alert2(t){ $("#offlineTxt").textContent=t; $("#offlineBar").hidden=false; window.scrollTo({top:0}); }
 boot();
 </script>
 </body>

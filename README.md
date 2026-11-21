@@ -6,6 +6,7 @@ Warehouse management for a quick-commerce dark store: **Shelf Ledger**. One web 
 |---|---|
 | `index.html` | The app. Tabs: **Orders** (live shop orders with the shelf to pick from), **Warehouse map**, **Inventory**, **Movers & reorder** (80/20 + dynamic reorder point with lead time), **Relocation** (zone moves checked against slot space and weight), **Scan failures**, **Setup**. Runs on demo data until you connect Supabase. |
 | `core.js` | Demo data, stock maths and the demo link to the shop. The same file is in QC-shop; keep the two copies identical. |
+| `supabase/open-access.sql` / `lock-down.sql` | Turn sign-free access to warehouse data on and off. |
 | `supabase/seed.sql` | Starter data: products, shelves, opening stock. No orders. |
 | `supabase/schema.sql` | Tables, the scan ledger, detector views, the shop catalogue view, the `place_order` and `order_status` functions, and row-level security. |
 
@@ -14,9 +15,9 @@ Warehouse management for a quick-commerce dark store: **Shelf Ledger**. One web 
 - **With GitHub Pages:** turn on Pages for this repo and for QC-shop (Settings → Pages → Deploy from branch → `main`, root). Both sites then live on `sahilrathour007.github.io`, so in demo mode an order placed in the shop shows up in the Orders tab of the same browser.
 - **Live (real orders):**
   1. Supabase → SQL Editor: paste `supabase/schema.sql` → Run. Then paste `supabase/seed.sql` → Run. The seed adds 36 products with example prices, 252 shelf slots and opening stock, and no orders. Both files are safe to run again.
-  2. Authentication → Users → Add user → Create new user (tick Auto Confirm).
-  3. Open the warehouse → **Setup**: paste the Project URL and the anon public key (Project Settings → API), plus that user's email and password → Connect.
-  4. Open the shop in the same browser: it picks up the same connection and shows **LIVE**. For customers on other devices, put the anon key in `SHOP_SUPABASE_ANON_KEY` in QC-shop's `index.html`.
+  2. **For now there is no staff sign-in.** Paste `supabase/open-access.sql` → Run, so the warehouse site can read the data. ⚠️ While it is on, anyone with the warehouse link can read every order, including customers' names, phone numbers and addresses, and can change order status and lead times. Run `supabase/lock-down.sql` to close it again before real customers order. The shop keeps working either way.
+  3. Open the warehouse site. It connects by itself; there is nothing to enter.
+  4. The shop is already connected for every visitor (`SHOP_SUPABASE_URL` / `SHOP_SUPABASE_ANON_KEY` in QC-shop's `index.html`).
   5. Your scanner app (or WMS) writes one `scan_events` row per stock movement. The Setup tab lists the fields.
 
 ## How it works
