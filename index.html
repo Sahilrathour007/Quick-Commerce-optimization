@@ -362,6 +362,9 @@ const ms = v => typeof v === "number" ? v : Date.parse(v);
 // ======================================================================
 // State
 // ======================================================================
+// Your Supabase project. The anon key is public by design; staff still sign in with email + password in Setup.
+const SUPABASE_URL = "https://ugoobcnusxmvdghghhtt.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnb29iY251c3htdmRnaGdoaHR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0Mzk4MTksImV4cCI6MjEwODAxNTgxOX0.qkZFtNaagypy3aDo2ZvhvqiXx-GyrerwS-WBm4ZfHeA";
 let MODE = "demo", sb = null;
 let S = {};               // tables
 let I = {};               // indexes
@@ -942,7 +945,7 @@ function boot(){
   ["#roWin","#roLead","#roSvc"].forEach(id=>$(id).addEventListener("change",roSave));
   document.addEventListener("change",e=>{ const lt=e.target.closest("input.lt"); if(lt) setLeadTime(lt.dataset.sku, lt.value.trim()); });
   $("#fPer").onchange=renderFailures;
-  $("#sbUrl").value=ls.get("shelfledger.sbUrl",""); $("#sbKey").value=ls.get("shelfledger.sbKey","");
+  $("#sbUrl").value=ls.get("shelfledger.sbUrl","")||SUPABASE_URL; $("#sbKey").value=ls.get("shelfledger.sbKey","")||SUPABASE_ANON_KEY;
   $("#cfgRefresh").value=String(ls.get("shelfledger.refresh",60)); $("#cfgRefresh").onchange=scheduleRefresh;
   $("#sbConnect").onclick=connectSupabase;
   $("#sbDemo").onclick=()=>{ MODE="demo"; sb=null; S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); msg("#sbMsg","info","Back on demo data."); render("setup"); };
