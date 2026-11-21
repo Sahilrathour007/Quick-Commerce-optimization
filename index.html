@@ -1,0 +1,986 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dark-Store Shelf Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+body{margin:0}
+/* Layout: a station console. Top bar + tab strip; each view is a working surface. Shelf addresses render as printed shelf labels. */
+:root{
+  --bg:#f3f5f7; --surface:#ffffff; --surface-2:#eaeef2; --ink:#121820; --ink-2:#465262; --muted:#6a7584; --line:#d6dce4;
+  --accent:#0b6a94; --accent-ink:#ffffff; --accent-soft:#dcedf5;
+  --label:#fff4c2; --label-ink:#2b240c; --label-edge:#d8c773;
+  --good:#1a7f37; --good-soft:#dff3e4; --warn:#9a5c00; --warn-soft:#fbeed3; --bad:#c22a2a; --bad-soft:#fbe0e0;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --cA-soft:#dde9f8; --cB-soft:#fbe4da; --cC-soft:#d9f2e8; --over-soft:#e6e2f8; --over:#6250d6;
+  --f-display:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e1217; --surface:#161b22; --surface-2:#1e252e; --ink:#e7ebf0; --ink-2:#b4bdc9; --muted:#8a94a2; --line:#2b333e;
+  --accent:#4ba7d6; --accent-ink:#071923; --accent-soft:#16303d;
+  --label:#3b341b; --label-ink:#f5e8b2; --label-edge:#6d6131;
+  --good:#3fb95f; --good-soft:#15301d; --warn:#e3a33a; --warn-soft:#3a2a10; --bad:#f06a6a; --bad-soft:#3b1717;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --cA-soft:#16273d; --cB-soft:#3a2016; --cC-soft:#12301f; --over-soft:#262141; --over:#9085e9; color-scheme:dark; } }
+:root[data-theme="dark"]{
+  --bg:#0e1217; --surface:#161b22; --surface-2:#1e252e; --ink:#e7ebf0; --ink-2:#b4bdc9; --muted:#8a94a2; --line:#2b333e;
+  --accent:#4ba7d6; --accent-ink:#071923; --accent-soft:#16303d;
+  --label:#3b341b; --label-ink:#f5e8b2; --label-edge:#6d6131;
+  --good:#3fb95f; --good-soft:#15301d; --warn:#e3a33a; --warn-soft:#3a2a10; --bad:#f06a6a; --bad-soft:#3b1717;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --cA-soft:#16273d; --cB-soft:#3a2016; --cC-soft:#12301f; --over-soft:#262141; --over:#9085e9; color-scheme:dark; }
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));padding-block:0 48px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:800} h3{font-size:1rem;font-weight:600}
+p{margin:0}
+.wrap{max-width:1200px;margin:0 auto}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:14px 0;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand h1{font-size:1.25rem;font-weight:800}
+.brand .sub{color:var(--muted);font-size:.85rem}
+.pill{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:.75rem;font-weight:600;padding:3px 10px;border-radius:99px;letter-spacing:.03em;text-transform:uppercase}
+.pill.demo{background:var(--warn-soft);color:var(--warn)} .pill.live{background:var(--good-soft);color:var(--good)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.good{background:var(--good-soft);color:var(--good)} .pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.neutral{background:var(--surface-2);color:var(--ink-2)}
+nav.tabs{display:flex;gap:2px;overflow-x:auto;margin-top:10px;scrollbar-width:none}
+nav.tabs a{flex:none;padding:9px 14px;color:var(--ink-2);text-decoration:none;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap}
+nav.tabs a:hover{color:var(--ink)}
+nav.tabs a[aria-current="page"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+nav.tabs a .k{font-family:var(--f-mono);font-size:.7rem;color:var(--muted);margin-left:6px}
+main{padding-top:22px}
+.view{display:flex;flex-direction:column;gap:18px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.head p{color:var(--ink-2);max-width:68ch}
+.grid2{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+@media (max-width:860px){.grid2,.grid3{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel > h3{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.muted{color:var(--muted)} .small{font-size:.82rem}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.8rem;font-weight:600;color:var(--ink-2);letter-spacing:.02em}
+select,input[type=text],input[type=number],input[type=password],input[type=email]{font:inherit;font-size:.95rem;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:8px 10px;min-width:0}
+select:focus-visible,input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.row > *{min-width:0}
+button{font:inherit;font-weight:600;font-size:.9rem;border-radius:7px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--ink-2)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.ghost{background:transparent}
+button.danger{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+.msg{border-radius:8px;padding:10px 12px;font-size:.9rem;font-weight:500;display:flex;gap:8px;align-items:flex-start}
+.msg.ok{background:var(--good-soft);color:var(--good)} .msg.err{background:var(--bad-soft);color:var(--bad)} .msg.warn{background:var(--warn-soft);color:var(--warn)} .msg.info{background:var(--surface-2);color:var(--ink-2)}
+.msg .ic{font-weight:800;flex:none}
+/* Shelf label chip */
+.loc{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-weight:600;font-size:.82rem;background:var(--label);color:var(--label-ink);border:1px solid var(--label-edge);border-radius:3px;padding:1px 7px 1px 5px;white-space:nowrap;cursor:pointer}
+.loc::before{content:"";width:10px;height:12px;background:repeating-linear-gradient(90deg,currentColor 0 1px,transparent 1px 2px,currentColor 2px 4px,transparent 4px 5px);opacity:.75}
+.loc.big{font-size:1.1rem;padding:4px 10px 4px 8px}
+.code{font-family:var(--f-mono);font-size:.82rem;color:var(--ink-2)}
+/* Tables */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:.86rem;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--surface-2);padding:8px 10px;white-space:nowrap}
+td{padding:7px 10px;border-top:1px solid var(--line);vertical-align:middle}
+td.n,th.n{text-align:right}
+tr.click{cursor:pointer} tr.click:hover td{background:var(--surface-2)}
+.bar{height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;min-width:60px}
+.bar > i{display:block;height:100%;background:var(--accent);border-radius:3px}
+/* KPI tiles */
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+@media (max-width:1000px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.kpi .l{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.kpi .v{font-family:var(--f-display);font-size:1.7rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .d{font-size:.78rem;color:var(--ink-2)}
+.kpi.sev-bad{box-shadow:inset 3px 0 0 var(--bad)} .kpi.sev-warn{box-shadow:inset 3px 0 0 var(--warn)} .kpi.sev-good{box-shadow:inset 3px 0 0 var(--good)}
+/* Chart */
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart text{fill:var(--muted);font-size:11px;font-family:var(--f-body)}
+.legend{display:flex;gap:14px;font-size:.8rem;color:var(--ink-2);flex-wrap:wrap}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.78rem;padding:7px 9px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);font-variant-numeric:tabular-nums}
+.tip[hidden]{display:none}
+.tag{font-family:var(--f-mono);font-size:.7rem;font-weight:600;padding:1px 6px;border-radius:4px;background:var(--surface-2);color:var(--ink-2)}
+.formula{font-family:var(--f-mono);font-size:.8rem;background:var(--surface-2);border-radius:8px;padding:10px 12px;line-height:1.7;overflow-x:auto;white-space:pre}
+details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
+.ordgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+@media (max-width:420px){.ordgrid{grid-template-columns:minmax(0,1fr)}}
+.ordcard{gap:10px}
+/* Map */
+.floorwrap{overflow-x:auto}
+#floor svg{display:block;min-width:760px;width:100%;height:auto}
+#floor text{font-family:var(--f-body);font-size:12px;fill:var(--ink-2)}
+#floor .bayr{cursor:pointer;stroke:var(--surface);stroke-width:2}
+#floor .bayr:hover{stroke:var(--ink)}
+.mapgrid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:18px;align-items:start}
+@media (max-width:980px){.mapgrid{grid-template-columns:minmax(0,1fr)}}
+.detail{position:sticky;top:calc(env(safe-area-inset-top,0px) + 120px);max-height:calc(100vh - 140px);overflow:auto}
+@media (max-width:980px){.detail{position:static;max-height:none}}
+.racks{display:flex;flex-direction:column;gap:14px;min-width:0}
+.rack{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0;scroll-margin-top:130px}
+.rackhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.rackhead b{font-family:var(--f-display);font-size:1rem}
+.rackscroll{overflow-x:auto}
+.rackgrid{display:grid;gap:3px;min-width:min-content}
+.lvl{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;align-items:center}
+.bayh{font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding-bottom:2px;border-bottom:2px solid var(--line)}
+.bs{margin-left:10px}
+.slot{font:inherit;text-align:left;border:1px solid var(--line);border-radius:5px;padding:5px 6px;min-height:50px;justify-self:stretch;display:flex;flex-direction:column;justify-content:space-between;gap:2px;cursor:pointer;background:var(--surface);color:var(--ink);min-width:0}
+.slot .sn{font-size:.72rem;font-weight:600;line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.slot .sq{font-family:var(--f-mono);font-size:.72rem;color:var(--ink-2);display:flex;justify-content:space-between;gap:4px}
+.slot.empty{background:var(--surface-2);border-style:dashed;color:var(--muted)}
+.slot.empty .sn{font-weight:400}
+.slot.ok{background:var(--accent-soft);border-color:transparent}
+.slot.low{background:var(--warn-soft);border-color:transparent}
+.slot.over{background:var(--over-soft);border-color:transparent}
+.slot.bad{background:var(--bad-soft);border-color:var(--bad)}
+.slot.warn{background:var(--warn-soft);border-color:var(--warn)}
+.slot.clean{background:var(--surface);}
+.slot.cA{background:var(--cA-soft);box-shadow:inset 3px 0 0 var(--s1);border-color:transparent}
+.slot.cB{background:var(--cB-soft);box-shadow:inset 3px 0 0 var(--s2);border-color:transparent}
+.slot.cC{background:var(--cC-soft);box-shadow:inset 3px 0 0 var(--s3);border-color:transparent}
+.slot.sel{outline:3px solid var(--ink);outline-offset:1px}
+.slot.hit{outline:3px solid var(--accent);outline-offset:1px}
+.dimmed .slot:not(.hit){opacity:.28}
+.legend i.sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px;border:1px solid var(--line)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:.85rem}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-weight:500}
+.skucard{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">
+    <h1>Shelf Ledger</h1>
+    <span class="sub">Dark store · where every SKU sits</span>
+    <span id="modePill" class="pill demo">Demo data</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <a href="#orders">Orders <span class="pill warn" id="ordBadge" hidden></span></a>
+    <a href="#map">Warehouse map</a>
+    <a href="#inventory">Inventory</a>
+    <a href="#reorder">Movers &amp; reorder</a>
+    <a href="#relocate">Relocation</a>
+    <a href="#failures">Scan failures</a>
+    <a href="#setup">Setup</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+
+<!-- ================= ORDERS ================= -->
+<section class="view" id="v-orders" hidden>
+  <div class="head"><div><h2>Orders</h2>
+    <p>Orders from the shop arrive here as they are placed. Each line shows the shelf to pick from. Move the order along as it is picked, packed and handed to the rider.</p></div>
+    <a class="pill neutral" href="../QC-shop/" style="text-decoration:none">Open the shop ↗</a></div>
+  <div class="kpis" id="ordKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="ordgrid" id="ordList"></div>
+  <p class="small muted">Pick scans come from your scanner app. An order dispatched without them shows up on Scan failures as missed outbound scans.</p>
+</section>
+
+<!-- ================= MAP ================= -->
+<section class="view" id="v-map" hidden>
+  <div class="head">
+    <div><h2>Warehouse map</h2>
+      <p>Every shelf slot as the racks stand, with what the scan ledger says is on it. Aisles run left to right from the pack bench outward. Click a slot for detail.</p></div>
+    <div class="row">
+      <label class="f">Find a product or shelf<input type="text" id="mapQ" placeholder="Maggi, 8901…, A-01-2" autocomplete="off"></label>
+      <label class="f">Colour by<select id="mapLayer">
+        <option value="stock">Stock level</option>
+        <option value="abc">80/20 class</option>
+        <option value="issue">Scan problems</option>
+      </select></label>
+    </div>
+  </div>
+  <div class="kpis" id="mapKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="panel">
+    <h3>Floor plan <span class="small muted" id="mapHits"></span></h3>
+    <div class="floorwrap"><div id="floor"></div></div>
+    <div class="legend" id="mapLegend"></div>
+  </div>
+  <div class="mapgrid">
+    <div id="racks" class="racks"></div>
+    <aside class="panel detail" id="mapDetail"></aside>
+  </div>
+</section>
+
+<!-- ================= INVENTORY ================= -->
+<section class="view" id="v-inventory" hidden>
+  <div class="head"><div><h2>Inventory</h2>
+    <p>Every SKU: what the books say you have, what the shelves have been scanned with, where it sits, and how long it will last.</p></div>
+    <div class="row">
+      <label class="f">Search<input type="text" id="invQ" placeholder="Name, EAN or shelf" autocomplete="off"></label>
+      <label class="f">Category<select id="invCat"></select></label>
+      <label class="f">Status<select id="invSt"><option value="">All</option><option value="out">Out of stock</option><option value="order">Order now</option><option value="ok">OK</option><option value="gap">Book ≠ shelf</option></select></label>
+    </div>
+  </div>
+  <div class="kpis" id="invKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="panel"><h3>Stock by SKU <span class="pill neutral" id="invN"></span></h3>
+    <p class="small muted">Book = received + sellable returns − dispatched. Shelf = scanned in − scanned out. When they differ, a scan was missed. Click a column to sort; click a shelf to open it on the map.</p>
+    <div class="tw"><table><thead><tr id="invHead"></tr></thead><tbody id="invBody"></tbody></table></div></div>
+</section>
+
+<!-- ================= MOVERS & REORDER ================= -->
+<section class="view" id="v-reorder" hidden>
+  <div class="head"><div><h2>Movers &amp; reorder</h2>
+    <p>80/20 view of what sells, what doesn't, and what to order today. Reorder points are recalculated from recent sales every time the data loads.</p></div>
+    <div class="row">
+      <label class="f">Sales window<select id="roWin"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="28" selected>Last 28 days</option></select></label>
+      <label class="f">Default lead time (days)<input type="number" id="roLead" min="0" step="0.5" style="width:120px"></label>
+      <label class="f">Service level<select id="roSvc"><option value="0.9">90%</option><option value="0.95">95%</option><option value="0.98">98%</option><option value="0.99">99%</option></select></label>
+    </div>
+  </div>
+  <div class="kpis" id="roKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="grid2">
+    <div class="panel"><h3>Best movers <span class="pill neutral" id="roBestN"></span></h3>
+      <p class="small muted">The few SKUs that make 80% of units sold. They belong in zone A, nearest the pack bench.</p>
+      <div class="tw"><table><thead><tr><th>Product</th><th class="n">Units/day</th><th class="n">Share</th><th class="n">Cum.</th><th>Shelf</th></tr></thead><tbody id="roBest"></tbody></table></div></div>
+    <div class="panel"><h3>Worst movers <span class="pill neutral" id="roWorstN"></span></h3>
+      <p class="small muted">The tail after 95% of units. Slowest first. Stock here is cash sitting still.</p>
+      <div class="tw"><table><thead><tr><th>Product</th><th class="n">Sold</th><th class="n">On hand</th><th class="n">Days of cover</th><th>Shelf</th></tr></thead><tbody id="roWorst"></tbody></table></div></div>
+  </div>
+  <div class="panel"><h3>Reorder <span class="pill neutral" id="roOrderN"></span></h3>
+    <p class="small muted">Reorder point = average daily sales × lead time + safety stock. Safety stock = z × daily variation × √lead time. On hand is book stock (received + sellable returns − dispatched), so a missed scan cannot hide a shortage. Type a lead time on any row to override the default for that SKU.</p>
+    <div class="tw"><table><thead><tr><th>Product</th><th>Class</th><th class="n">Sales/day</th><th class="n">Variation</th><th class="n">Lead time (d)</th><th class="n">Safety stock</th><th class="n">Reorder point</th><th class="n">On hand</th><th class="n">On order</th><th class="n">Days left</th><th class="n">Order qty</th><th>Status</th></tr></thead><tbody id="roBody"></tbody></table></div></div>
+</section>
+
+<!-- ================= RELOCATION ================= -->
+<section class="view" id="v-relocate" hidden>
+  <div class="head"><div><h2>Relocation</h2>
+    <p>Which SKUs to move, how many units, and where to, checked against each slot's space and weight limit. Best movers go to zone A, worst movers leave it. Whatever does not fit in a pick slot goes to reserve (back stock) and refills the slot later.</p></div></div>
+  <div class="kpis" id="rlKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  <div class="panel"><h3>Moves, in order <span class="pill neutral" id="rlN"></span></h3>
+    <p class="small muted">Do them top to bottom. Moving slow SKUs out of zone A comes first, because that frees the slots the fast ones move into. Each move is one move-out scan at the old slot and one move-in scan at the new one.</p>
+    <div class="tw"><table><thead><tr><th>#</th><th>Product</th><th>Class</th><th class="n">Sells/day</th><th>From</th><th class="n">On shelf</th><th class="n">Move</th><th>To</th><th class="n">Space</th><th class="n">Weight</th><th>Destination after move</th><th>Why</th></tr></thead><tbody id="rlBody"></tbody></table></div></div>
+  <div class="grid2">
+    <div class="panel"><h3>Slots over their limit <span class="pill neutral" id="rlOverN"></span></h3>
+      <p class="small muted">The space or weight on the slot is more than it holds. Either the stock is too high or it was put in the wrong slot.</p>
+      <div class="tw"><table><thead><tr><th>Slot</th><th>Product</th><th class="n">Units</th><th>Space used</th><th>Weight used</th></tr></thead><tbody id="rlOver"></tbody></table></div></div>
+    <div class="panel"><h3>How space per unit is worked out</h3>
+      <p class="small">Weight is read when the product is scanned and checked against each slot's weight limit. Space comes from the product's size (length × width × height) where it is on file. Where it is missing, it is estimated from weight ÷ a typical packed density for the category, and marked <span class="pill warn">est.</span></p>
+      <div class="tw"><table><thead><tr><th>Category</th><th class="n">kg per litre</th><th class="n">SKUs estimated</th></tr></thead><tbody id="rlDens"></tbody></table></div>
+      <p class="small muted">Estimates are rough. Chips weigh 0.05 kg per litre and salt about 1.1, so one density per category can miss by 2×. Measure the top SKUs once and enter their size.</p></div>
+  </div>
+</section>
+
+<!-- ================= FAILURES ================= -->
+<section class="view" id="v-failures" hidden>
+  <div class="head"><div><h2>Scan failures</h2>
+    <p>Two detectors. Inbound: the dock counted X units, but the shelves only got Y scanned in. Outbound: the order system dispatched X units, but the shelves only dropped by Y.</p></div>
+    <label class="f">Period<select id="fPer"><option value="7" selected>Last 7 days</option><option value="14">Last 14 days</option></select></label></div>
+  <div class="kpis" id="fKpis"></div>
+  <div class="grid2">
+    <div class="panel"><h3>Daily scan compliance</h3>
+      <div class="legend"><span><i style="background:var(--s1)"></i>Inbound (units scanned ÷ units received)</span><span><i style="background:var(--s2)"></i>Outbound (units scanned ÷ units dispatched)</span></div>
+      <div class="chart" id="fLine"><div class="tip" id="fTip" hidden></div></div></div>
+    <div class="panel"><h3>Missed outbound units by hour</h3>
+      <p class="small muted">If misses pile up at the evening peak, the cause is pace, not training.</p>
+      <div class="chart" id="fHour"><div class="tip" id="fTip2" hidden></div></div></div>
+  </div>
+  <div class="panel"><h3>By operator</h3>
+    <div class="tw"><table><thead><tr><th>Operator</th><th>Station</th><th class="n">Lines owned</th><th class="n">Lines with a gap</th><th class="n">Units missed</th><th class="n">Double scans</th><th>Compliance</th></tr></thead><tbody id="fOps"></tbody></table></div></div>
+  <div class="grid2">
+    <div class="panel"><h3>Book stock vs shelf stock, worst SKUs</h3>
+      <p class="small muted">Book = received + sellable returns − dispatched. Shelf = scanned in − scanned out. Positive gap: shelf thinks it has stock that already left (missed OUT). Negative: stock arrived but never reached a shelf in the system (missed IN, or shrinkage).</p>
+      <div class="tw"><table><thead><tr><th>Product</th><th class="n">Book</th><th class="n">Shelf</th><th class="n">Gap</th><th>Likely cause</th></tr></thead><tbody id="fRecon"></tbody></table></div></div>
+    <div class="panel"><h3>Shelves showing negative stock</h3>
+      <p class="small muted">Units were scanned out of a shelf that never had them scanned in. Each one is a missed inbound scan, proven.</p>
+      <div class="tw"><table><thead><tr><th>Shelf</th><th>Product</th><th class="n">Ledger qty</th><th>Last scan</th></tr></thead><tbody id="fNeg"></tbody></table></div></div>
+  </div>
+  <div class="panel"><h3>Lines with a gap <span class="pill neutral" id="fLinesN">0</span></h3>
+    <div class="tw"><table><thead><tr><th>When</th><th>Detector</th><th>Ref</th><th>Product</th><th class="n">Expected</th><th class="n">Scanned</th><th class="n">Gap</th><th>Owner</th></tr></thead><tbody id="fLines"></tbody></table></div></div>
+</section>
+
+<!-- ================= SETUP ================= -->
+<section class="view" id="v-setup" hidden>
+  <div class="head"><div><h2>Setup</h2><p>Connect your Supabase project, then label each station's scanner.</p></div></div>
+  <div class="grid2">
+    <div class="panel"><h3>Supabase</h3>
+      <ol class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+        <li>Create a project at supabase.com.</li>
+        <li>SQL Editor → paste <span class="code">supabase/schema.sql</span> → Run.</li>
+        <li>Authentication → Users → add one user per station (e.g. in-station@yourco, out-station@yourco).</li>
+        <li>Project Settings → API → copy the Project URL and the anon public key below.</li>
+      </ol>
+      <label class="f">Project URL<input type="text" id="sbUrl" placeholder="https://xxxx.supabase.co"></label>
+      <label class="f">Anon public key<input type="password" id="sbKey" placeholder="eyJhbGciOi…"></label>
+      <label class="f">Station login email<input type="email" id="sbEmail"></label>
+      <label class="f">Password<input type="password" id="sbPass"></label>
+      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button id="sbSeed" disabled>Copy demo data into Supabase</button><button class="ghost" id="sbDemo">Back to demo data</button></div>
+      <div id="sbMsg"></div>
+      <p class="small muted">Inside the Claude artifact viewer, calls to outside servers are blocked, so this page can only run on demo data here. Host <span class="code">index.html</span> yourself (Vercel, Netlify, or open it from disk) to connect.</p>
+    </div>
+    <div class="panel"><h3>How scans reach the map</h3>
+      <p class="small">This site only reads. Your scanners (a handheld app, scanner PCs, or your WMS) write one row into <span class="code">scan_events</span> per movement. The map, reorder list and failure checks are all built from those rows.</p>
+      <div class="formula">station          IN | OUT
+event_type       PUTAWAY | RETURN_PUTAWAY | MOVE_IN | PICK | MOVE_OUT | DAMAGE
+sku_id           SKU1001
+location_code    A-01-2-B-03      (scanned from the shelf label)
+qty              12
+ref_type/ref_id  PO / PO-261121 · ORDER / ORD-50231 · RETURN / RET-0042
+scanner_id       IN-01 | OUT-01
+operator         Ravi</div>
+      <label class="f">Refresh the map every<select id="cfgRefresh"><option value="0">Off</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option></select></label>
+      <p class="small muted">Shelf labels: print each location code (e.g. <span class="loc">A-01-2-B-03</span>) as a Code-128 barcode, so a scan tells a shelf from a product.</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="core.js"></script>
+<script>
+"use strict";
+// ======================================================================
+// Utilities
+// ======================================================================
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const HOUR = 3600e3, DAY = 24*HOUR;
+const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v);}catch(e){return d;} },
+             set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} } };
+const fmtPct = x => (x==null||isNaN(x)) ? "—" : (x*100).toFixed(1)+"%";
+const fmtN = x => Math.round(x).toLocaleString("en-IN");
+function ago(t){ const m=(Date.now()-t)/60000; if(m<1) return "just now"; if(m<60) return Math.round(m)+" min ago"; if(m<1440) return Math.round(m/60)+" h ago"; return Math.round(m/1440)+" d ago"; }
+function dt(t){ const d=new Date(t); return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:false}); }
+const locChip = (c, big) => `<span class="loc${big?" big":""}" data-loc="${esc(c)}">${esc(c)}</span>`;
+const ms = v => typeof v === "number" ? v : Date.parse(v);
+
+// ======================================================================
+// State
+// ======================================================================
+let MODE = "demo", sb = null;
+let S = {};               // tables
+let I = {};               // indexes
+let NOW = Date.now();
+const cfg = { inId:"IN-01", outId:"OUT-01" };
+
+function reindex(){
+  NOW = Date.now();
+  I.sku = new Map(S.skus.map(s=>[s.sku_id,s]));
+  I.ean = new Map(S.skus.map(s=>[String(s.barcode),s]));
+  I.loc = new Map(S.locations.map(l=>[l.code,l]));
+  I.po = new Map(S.purchase_orders.map(p=>[p.po_id,p]));
+  I.order = new Map(S.sales_orders.map(o=>[o.order_id,o]));
+  I.ret = new Map(S.customer_returns.map(r=>[r.return_id,r]));
+  I.linesByOrder = new Map();
+  for(const l of S.order_lines){ if(!I.linesByOrder.has(l.order_id)) I.linesByOrder.set(l.order_id,[]); I.linesByOrder.get(l.order_id).push(l); }
+  // ledger → stock per sku|loc, and scanned qty per reference
+  I.stock = new Map(); I.byRef = new Map();
+  for(const e of S.scan_events){
+    const k = e.sku_id+"|"+e.location_code;
+    let r = I.stock.get(k); if(!r){ r={sku_id:e.sku_id, location_code:e.location_code, qty:0, last:0}; I.stock.set(k,r); }
+    r.qty += e.station==="IN" ? e.qty : -e.qty; r.last = Math.max(r.last, ms(e.scanned_at));
+    if(e.ref_id){ const rk=e.event_type+"|"+e.ref_id+"|"+e.sku_id; I.byRef.set(rk,(I.byRef.get(rk)||0)+e.qty); }
+  }
+  I.stockBySku = new Map();
+  for(const r of I.stock.values()){ if(r.qty===0) continue; if(!I.stockBySku.has(r.sku_id)) I.stockBySku.set(r.sku_id,[]); I.stockBySku.get(r.sku_id).push(r); }
+  for(const arr of I.stockBySku.values()) arr.sort((a,b)=>I.loc.get(a.location_code).walk_m - I.loc.get(b.location_code).walk_m);
+}
+function homeOf(sku_id){
+  const arr=(I.stockBySku.get(sku_id)||[]).filter(r=>r.qty>0 && !I.loc.get(r.location_code).is_reserve);
+  if(!arr.length) return null;
+  return arr.slice().sort((a,b)=>b.qty-a.qty)[0].location_code;
+}
+function bookQty(sku_id){
+  let q=0;
+  for(const l of S.po_lines) if(l.sku_id===sku_id && l.qty_received!=null) q+=l.qty_received;
+  for(const r of S.customer_returns) if(r.sku_id===sku_id && r.condition==="sellable") q+=r.qty;
+  for(const l of S.order_lines) if(l.sku_id===sku_id && I.order.get(l.order_id)?.status==="dispatched") q-=l.qty;
+  return q;
+}
+
+// ======================================================================
+// Detectors
+// ======================================================================
+const GRACE = 4*HOUR;
+function inboundLines(days){
+  const since = NOW - days*DAY, out=[];
+  for(const l of S.po_lines){
+    const po=I.po.get(l.po_id); if(!po || !po.received_at || l.qty_received==null) continue;
+    const t=ms(po.received_at); if(t<since) continue;
+    const sc=I.byRef.get("PUTAWAY|"+l.po_id+"|"+l.sku_id)||0;
+    out.push({det:"IN", kind:"PO", ref:l.po_id, sku_id:l.sku_id, t, expected:l.qty_received, scanned:sc, short:l.qty_ordered-l.qty_received, owner:po.receiver||"—", pending:t>NOW-GRACE});
+  }
+  for(const r of S.customer_returns){
+    if(r.condition!=="sellable") continue; const t=ms(r.received_at); if(t<since) continue;
+    const sc=I.byRef.get("RETURN_PUTAWAY|"+r.return_id+"|"+r.sku_id)||0;
+    out.push({det:"IN", kind:"Return", ref:r.return_id, sku_id:r.sku_id, t, expected:r.qty, scanned:sc, short:0, owner:r.received_by||"—", pending:t>NOW-GRACE});
+  }
+  return out;
+}
+function outboundLines(days){
+  const since = NOW - days*DAY, out=[];
+  for(const o of S.sales_orders){
+    if(o.status!=="dispatched" || !o.dispatched_at) continue; const t=ms(o.dispatched_at); if(t<since) continue;
+    for(const l of (I.linesByOrder.get(o.order_id)||[])){
+      const sc=I.byRef.get("PICK|"+o.order_id+"|"+l.sku_id)||0;
+      out.push({det:"OUT", kind:"Order", ref:o.order_id, sku_id:l.sku_id, t, hour:new Date(ms(o.placed_at)).getHours(), expected:l.qty, scanned:sc, owner:o.picker||"—", pending:false});
+    }
+  }
+  return out;
+}
+const gapOf = r => Math.max(0, r.expected - r.scanned);
+const overOf = r => Math.max(0, r.scanned - r.expected);
+
+// ======================================================================
+// Persistence (demo memory or Supabase)
+// ======================================================================
+async function fetchAll(table){
+  const out=[]; for(let from=0;;from+=1000){ const {data,error}=await sb.from(table).select("*").range(from,from+999); if(error) throw new Error(table+": "+error.message); out.push(...data); if(data.length<1000) break; } return out;
+}
+const TABLES=["skus","locations","purchase_orders","po_lines","sales_orders","order_lines","customer_returns","scan_events","cycle_counts"];
+
+// ======================================================================
+// Rendering helpers
+// ======================================================================
+function msg(target, kind, text){ const ic={ok:"✓",err:"✕",warn:"!",info:"i"}[kind]; $(target).innerHTML = text? `<div class="msg ${kind}"><span class="ic">${ic}</span><span>${text}</span></div>` : ""; }
+// ======================================================================
+// WAREHOUSE MAP
+// ======================================================================
+const LEVEL={A:"Floor",B:"Waist",C:"Shoulder",D:"Top"};
+const ZONE_NAME={A:"Fast movers",B:"Medium movers",C:"Slow movers",H:"Heavy, floor only",K:"Cold room",F:"Freezer"};
+const MAP={sel:null, M:null};
+function mapStats(){
+  const an=analyse();
+  const bySku=new Map(an.rows.map(r=>[r.sku.sku_id,r]));
+  const byLoc=new Map();
+  for(const r of I.stock.values()){ if(r.qty===0) continue; if(!byLoc.has(r.location_code)) byLoc.set(r.location_code,[]); byLoc.get(r.location_code).push(r); }
+  for(const a of byLoc.values()) a.sort((x,y)=>y.qty-x.qty);
+  const book=new Map(S.skus.map(s=>[s.sku_id,0]));
+  for(const l of S.po_lines) if(l.qty_received!=null && book.has(l.sku_id)) book.set(l.sku_id, book.get(l.sku_id)+l.qty_received);
+  for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id, book.get(r.sku_id)+r.qty);
+  for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id, book.get(l.sku_id)-l.qty);
+  const shelfQ=sku=>(I.stockBySku.get(sku)||[]).reduce((a,r)=>a+r.qty,0);
+  const gap=new Map(S.skus.map(s=>[s.sku_id, shelfQ(s.sku_id)-book.get(s.sku_id)]));
+  const shelves=sku=>(I.stockBySku.get(sku)||[]).filter(r=>r.qty>0).length;
+  return {bySku, byLoc, book, gap, shelves};
+}
+function cellState(code, layer){
+  const M=MAP.M, items=M.byLoc.get(code)||[];
+  if(!items.length) return "empty";
+  const main=items[0], neg=items.some(r=>r.qty<0), mixed=items.filter(r=>r.qty>0).length>1;
+  if(layer==="issue"){ if(neg) return "bad"; if(mixed || M.shelves(main.sku_id)>1 || M.gap.get(main.sku_id)!==0) return "warn"; return "clean"; }
+  const st=M.bySku.get(main.sku_id);
+  if(layer==="abc") return st ? "c"+st.cls : "empty";
+  if(main.qty<=0) return "bad";
+  if(st && main.qty <= st.rop) return "low";
+  if(st && main.qty > 2*st.upTo) return "over";
+  return "ok";
+}
+const LEGENDS={
+  stock:[["ok","Healthy: above reorder point"],["low","At or below reorder point"],["over","Overstocked: more than 2× the order-up-to level"],["bad","Zero or negative in the ledger"],["empty","Empty slot"]],
+  abc:[["cA","A: first 80% of units sold"],["cB","B: next 15%"],["cC","C: slow tail"],["empty","Empty slot"]],
+  issue:[["bad","Negative stock: missed inbound scan, proven"],["warn","Book ≠ shelf, product on 2+ shelves, or 2 products in one slot"],["clean","Clean"],["empty","Empty slot"]],
+};
+const SW_COLOR={ok:"var(--accent-soft)",low:"var(--warn-soft)",over:"var(--over-soft)",bad:"var(--bad-soft)",warn:"var(--warn-soft)",clean:"var(--surface)",empty:"var(--surface-2)",cA:"var(--s1)",cB:"var(--s2)",cC:"var(--s3)"};
+const FLOOR_FILL={ok:"var(--accent)",low:"var(--warn)",over:"var(--over)",bad:"var(--bad)",warn:"var(--warn)",clean:"var(--good)",empty:"var(--surface-2)",cA:"var(--s1)",cB:"var(--s2)",cC:"var(--s3)"};
+function shortName(n){ return n.replace(/\s+\d.*$/,"").split(" ").slice(0,3).join(" "); }
+function aislesInOrder(){
+  const m=new Map();
+  for(const l of S.locations){ if(!l.is_active) continue; const k=l.zone+"|"+l.aisle; if(!m.has(k)) m.set(k,{zone:l.zone, aisle:l.aisle, locs:[], minW:1e9, maxW:0, temp:l.temp_class}); const a=m.get(k); a.locs.push(l); a.minW=Math.min(a.minW,l.walk_m); a.maxW=Math.max(a.maxW,l.walk_m); }
+  return [...m.values()].sort((a,b)=>((a.temp==="ambient")-(b.temp==="ambient")) || a.minW-b.minW || a.aisle-b.aisle);
+}
+function matchQ(code, q){
+  if(!q) return false;
+  if(code.toLowerCase().startsWith(q)) return true;
+  return (MAP.M.byLoc.get(code)||[]).some(r=>{ const s=I.sku.get(r.sku_id); return s && (s.name.toLowerCase().includes(q) || String(s.barcode).includes(q)); });
+}
+function renderMap(){
+  MAP.M=mapStats(); const M=MAP.M, layer=$("#mapLayer").value, q=$("#mapQ").value.trim().toLowerCase();
+  const aisles=aislesInOrder();
+  // KPIs
+  const active=S.locations.filter(l=>l.is_active&&!l.is_reserve);
+  const used=active.filter(l=>(M.byLoc.get(l.code)||[]).some(r=>r.qty>0)).length;
+  const multi=S.skus.filter(s=>M.shelves(s.sku_id)>1).length;
+  const neg=[...I.stock.values()].filter(r=>r.qty<0).length;
+  const none=S.skus.filter(s=>M.shelves(s.sku_id)===0).length;
+  const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
+  $("#mapKpis").innerHTML = k("Slots in use", `${used} / ${active.length}`, `${fmtPct(used/active.length)} of shelf slots hold stock`)
+    + k("SKUs on 2+ shelves", multi, "Two places to search", multi?"sev-warn":"sev-good")
+    + k("Negative slots", neg, "Picked from where nothing was scanned in", neg?"sev-bad":"sev-good")
+    + k("SKUs on no shelf", none, "Sold, but not findable on the map", none?"sev-bad":"sev-good");
+  // Legend
+  $("#mapLegend").innerHTML = LEGENDS[layer].map(([c,t])=>`<span><i class="sw" style="background:${SW_COLOR[c]}"></i>${t}</span>`).join("") + `<span><i class="sw" style="background:transparent;outline:2px solid var(--accent)"></i>Search match</span>`;
+  // Floor plan (top-down)
+  const W=1000, H=252, x0=150, aw=46, gapA=40;
+  let svg=`<rect x="8" y="20" width="112" height="170" rx="8" fill="var(--surface-2)" stroke="var(--line)"/><text x="64" y="100" text-anchor="middle" style="font-weight:600;fill:var(--ink)">Pack &amp;</text><text x="64" y="116" text-anchor="middle" style="font-weight:600;fill:var(--ink)">dispatch</text><text x="64" y="208" text-anchor="middle">Riders ↓</text>`;
+  let x=x0; const pos=[];
+  aisles.forEach((a,i)=>{ if(i>0 && (aisles[i-1].temp!=="ambient") && a.temp==="ambient") x+=24; pos.push(x); x+=aw+gapA; });
+  const coldIdx=aisles.map((a,i)=>a.temp!=="ambient"?i:-1).filter(i=>i>=0);
+  if(coldIdx.length){ const cx=pos[coldIdx[0]]-14, cw=pos[coldIdx[coldIdx.length-1]]+aw+14-cx; svg+=`<rect x="${cx}" y="8" width="${cw}" height="196" rx="8" fill="none" stroke="var(--s1)" stroke-dasharray="5 4"/><text x="${cx+cw/2}" y="224" text-anchor="middle" style="fill:var(--s1);font-weight:600">Cold room</text>`; }
+  aisles.forEach((a,i)=>{
+    const bays=[...new Set(a.locs.map(l=>l.bay))].sort((p,q2)=>p-q2), bh=150/bays.length, ax=pos[i];
+    bays.forEach((b,bi)=>{
+      const codes=a.locs.filter(l=>l.bay===b).map(l=>l.code);
+      const states=codes.map(c=>cellState(c,layer)), hits=codes.filter(c=>matchQ(c,q)).length;
+      const pri=["bad","warn","low","over","cA","cB","cC","ok","clean","empty"];
+      const counts={}; states.forEach(s2=>counts[s2]=(counts[s2]||0)+1);
+      let st = layer==="issue" ? pri.find(p=>counts[p]) : Object.entries(counts).filter(([s2])=>s2!=="empty").sort((m1,m2)=>m2[1]-m1[1])[0]?.[0]||"empty";
+      const fill = q ? (hits? "var(--accent)" : "var(--surface-2)") : FLOOR_FILL[st];
+      svg+=`<rect class="bayr" data-rack="${a.zone}-${a.aisle}" x="${ax}" y="${36+bi*bh}" width="${aw}" height="${bh-2}" rx="3" fill="${fill}"><title>Aisle ${String(a.aisle).padStart(2,"0")} bay ${b}${hits?` · ${hits} match${hits>1?"es":""}`:""}</title></rect>`;
+      if(q && hits) svg+=`<text x="${ax+aw/2}" y="${36+bi*bh+bh/2+4}" text-anchor="middle" style="fill:var(--accent-ink);font-weight:700">${hits}</text>`;
+    });
+    svg+=`<text x="${ax+aw/2}" y="28" text-anchor="middle" style="font-weight:700;fill:var(--ink)">${a.zone}-${String(a.aisle).padStart(2,"0")}</text>`;
+  });
+  svg+=`<path d="M128 ${H-12} H${x-gapA}" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arr)"/><defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--muted)"/></marker></defs><text x="${(128+x-gapA)/2}" y="${H-16}" text-anchor="middle">farther from the pack bench</text>`;
+  $("#floor").innerHTML=`<svg viewBox="0 0 ${Math.max(W,x+10)} ${H}" role="img" aria-label="Top-down floor plan of aisles">${svg}</svg>`;
+  // Rack elevations
+  let hitCount=0, firstHit=null;
+  $("#racks").innerHTML = aisles.map(a=>{
+    const bays=[...new Set(a.locs.map(l=>l.bay))].sort((p,q2)=>p-q2), shelves=[...new Set(a.locs.map(l=>l.shelf))].sort().reverse(), slots=[...new Set(a.locs.map(l=>l.slot))].sort((p,q2)=>p-q2);
+    const cols=bays.length*slots.length;
+    let g=`<div></div>`+bays.map((b,bi)=>`<div class="bayh${bi?" bs":""}" style="grid-column:span ${slots.length}">Bay ${b}</div>`).join("");
+    for(const sh of shelves){
+      g+=`<div class="lvl">${LEVEL[sh]||sh}</div>`;
+      bays.forEach((b,bi)=>slots.forEach((sl,si)=>{
+        const L=a.locs.find(l=>l.bay===b&&l.shelf===sh&&l.slot===sl);
+        if(!L){ g+=`<div${si===0&&bi?' class="bs"':""}></div>`; return; }
+        const items=M.byLoc.get(L.code)||[], st=cellState(L.code,layer), hit=matchQ(L.code,q);
+        if(hit){ hitCount++; if(!firstHit) firstHit=L.code; }
+        const main=items[0]; const nm = main ? shortName(I.sku.get(main.sku_id)?.name||main.sku_id) + (items.length>1?` +${items.length-1}`:"") : "empty";
+        g+=`<button class="slot ${st}${hit?" hit":""}${MAP.sel===L.code?" sel":""}${si===0&&bi?" bs":""}" data-cell="${esc(L.code)}" title="${esc(L.code)}${main?" · "+esc(I.sku.get(main.sku_id)?.name)+" · "+main.qty:""}"><span class="sn">${esc(nm)}</span><span class="sq"><span>${main?main.qty:""}</span><span>${esc(String(sl).padStart(2,"0"))}</span></span></button>`;
+      }));
+    }
+    const tempPill = a.temp==="ambient" ? "" : `<span class="pill neutral">${a.temp}</span>`;
+    return `<div class="rack" id="rack-${a.zone}-${a.aisle}"><div class="rackhead"><b>Aisle ${String(a.aisle).padStart(2,"0")}</b><span class="tag">Zone ${a.zone}</span><span class="small muted">${ZONE_NAME[a.zone]||""}</span>${tempPill}</div>
+      <div class="rackscroll"><div class="rackgrid${q?" dimmed":""}" style="grid-template-columns:62px repeat(${cols},minmax(74px,1fr))">${g}</div></div></div>`;
+  }).join("");
+  $("#mapHits").textContent = q ? (hitCount ? `${hitCount} slot${hitCount>1?"s":""} match "${$("#mapQ").value.trim()}"` : `Nothing matches "${$("#mapQ").value.trim()}"`) : "";
+  MAP.firstHit=firstHit;
+  renderDetail();
+}
+function renderDetail(){
+  const M=MAP.M, code=MAP.sel, L=code&&I.loc.get(code);
+  if(!L){
+    const issues=[...I.stock.values()].filter(r=>r.qty<0).slice(0,5);
+    $("#mapDetail").innerHTML=`<h3>Slot detail</h3><p class="small muted">Click any slot on a rack to see what is on it, who scanned it last, and whether the product should live somewhere else.</p>
+      ${issues.length?`<p class="small"><b>Start here:</b> these slots are negative in the ledger.</p><div class="chips" style="display:flex;gap:6px;flex-wrap:wrap">${issues.map(r=>locChip(r.location_code)).join("")}</div>`:""}`;
+    return;
+  }
+  const items=M.byLoc.get(code)||[];
+  const usedVol=items.filter(r=>r.qty>0).reduce((a,r)=>a+r.qty*(I.sku.get(r.sku_id)?unitVol(I.sku.get(r.sku_id)).v:0),0);
+  const usedKg=items.filter(r=>r.qty>0).reduce((a,r)=>a+r.qty*(+I.sku.get(r.sku_id)?.unit_weight_kg||0),0);
+  const evs=S.scan_events.filter(e=>e.location_code===code).slice(-5).reverse();
+  const cards=items.map(r=>{
+    const s=I.sku.get(r.sku_id), st=M.bySku.get(r.sku_id), gap=M.gap.get(r.sku_id);
+    const others=(I.stockBySku.get(r.sku_id)||[]).filter(o=>o.location_code!==code && o.qty>0);
+    const flags=[];
+    if(r.qty<0) flags.push(`<div class="msg err"><span class="ic">✕</span><span>Ledger is at ${r.qty}. Units were scanned out of this slot that were never scanned in.</span></div>`);
+    if(gap) flags.push(`<div class="msg warn"><span class="ic">!</span><span>Book stock ${M.book.get(r.sku_id)} vs shelves ${M.book.get(r.sku_id)+gap}: ${gap>0?"a pick was not scanned out":"a putaway was not scanned in, or stock is missing"}.</span></div>`);
+    if(st && st.advice) flags.push(`<div class="msg info"><span class="ic">→</span><span>${st.advice}: class ${st.cls} product in zone ${esc(L.zone)}.</span></div>`);
+    if(st && st.status!=="ok") flags.push(`<div class="msg warn"><span class="ic">!</span><span>${st.status==="out"?"Out of stock on book":"At or below reorder point"}. Order ${st.order} units.</span></div>`);
+    return `<div class="skucard"><b>${esc(s?.name||r.sku_id)}</b>
+      <dl class="kv"><dt>EAN</dt><dd class="code">${esc(s?.barcode)}</dd><dt>Here</dt><dd>${r.qty} units</dd>
+      ${st?`<dt>Sells</dt><dd>${st.avg.toFixed(1)} / day · class ${st.cls}</dd><dt>Reorder at</dt><dd>${st.rop} units</dd><dt>Cover</dt><dd>${st.avg?(Math.max(0,r.qty)/st.avg).toFixed(1)+" days":"—"}</dd>`:""}
+      <dt>Also on</dt><dd>${others.length?others.map(o=>`${locChip(o.location_code)} ${o.qty}`).join(" "):"no other shelf"}</dd></dl>${flags.join("")}</div>`;
+  }).join("");
+  $("#mapDetail").innerHTML=`<div class="row" style="justify-content:space-between;align-items:center"><span class="loc big">${esc(code)}</span><button class="ghost" id="mapClose">Close</button></div>
+    <dl class="kv"><dt>Zone</dt><dd>${esc(L.zone)} · ${ZONE_NAME[L.zone]||""}</dd><dt>Position</dt><dd>Aisle ${L.aisle}, bay ${L.bay}, ${LEVEL[L.shelf]||L.shelf} shelf, slot ${L.slot}</dd>
+    <dt>Temp</dt><dd>${esc(L.temp_class)}</dd><dt>Space used</dt><dd>${(usedVol/1000).toFixed(1)} of ${(L.capacity_cm3/1000).toFixed(0)} L (${fmtPct(usedVol/L.capacity_cm3)})</dd><dt>Weight</dt><dd>${usedKg.toFixed(1)} of ${L.max_weight_kg} kg (${fmtPct(usedKg/L.max_weight_kg)})</dd></dl>
+    ${cards || `<p class="muted small">Empty. Nothing has been scanned onto this slot, or everything has been scanned out.</p>`}
+    <div class="skucard"><b class="small">Last scans here</b>${evs.length?evs.map(e=>`<div class="small"><span class="tag">${esc(e.event_type)}</span> ${e.station==="IN"?"+":"−"}${e.qty} ${esc(shortName(I.sku.get(e.sku_id)?.name||""))} · ${esc(e.operator)} · <span class="muted">${ago(ms(e.scanned_at))}</span></div>`).join(""):`<span class="small muted">None</span>`}</div>`;
+}
+
+// ======================================================================
+// Movers & reorder (80/20 + dynamic reorder point)
+// ======================================================================
+const RO = Object.assign({window:28, lead:2, service:0.95}, ls.get("shelfledger.ro",{}));
+const ZV = {"0.9":1.28,"0.95":1.65,"0.98":2.05,"0.99":2.33};
+function analyse(){
+  const W=RO.window, z=ZV[String(RO.service)]||1.65;
+  const today=new Date(NOW); today.setHours(0,0,0,0); const end=today.getTime(), first=end-W*DAY;   // W full days, today excluded
+  const daily=new Map(S.skus.map(s=>[s.sku_id,new Array(W).fill(0)]));
+  for(const o of S.sales_orders){ if(o.status==="cancelled") continue; const t=ms(o.placed_at); if(t<first||t>=end) continue;
+    const di=Math.floor((t-first)/DAY); for(const l of (I.linesByOrder.get(o.order_id)||[])) { const d=daily.get(l.sku_id); if(d) d[di]+=l.qty; } }
+  const book=new Map(S.skus.map(s=>[s.sku_id,0])), onOrder=new Map(S.skus.map(s=>[s.sku_id,0]));
+  for(const l of S.po_lines){ if(!book.has(l.sku_id)) continue; if(l.qty_received!=null) book.set(l.sku_id,book.get(l.sku_id)+l.qty_received); else onOrder.set(l.sku_id,onOrder.get(l.sku_id)+l.qty_ordered); }
+  for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id,book.get(r.sku_id)+r.qty);
+  for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id,book.get(l.sku_id)-l.qty);
+  const rows=S.skus.map(s=>{
+    const d=daily.get(s.sku_id), units=d.reduce((a,b)=>a+b,0), avg=units/W;
+    const sd=Math.sqrt(d.reduce((a,b)=>a+(b-avg)**2,0)/Math.max(1,W-1));
+    const L = s.lead_time_days!=null ? +s.lead_time_days : RO.lead;
+    const ss=Math.ceil(z*sd*Math.sqrt(L)), rop=Math.ceil(avg*L)+ss, upTo=Math.ceil(avg*(L+1))+ss;   // reviewed daily
+    const onHand=book.get(s.sku_id), oo=onOrder.get(s.sku_id), pos=onHand+oo;
+    const order = pos<=rop ? Math.max(0, upTo-pos) : 0;
+    const status = onHand<=0 ? "out" : pos<=rop ? "order" : "ok";
+    const home=homeOf(s.sku_id), zone=home ? I.loc.get(home).zone : null;
+    return {sku:s, units, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
+  }).sort((a,b)=>b.units-a.units);
+  const tot=rows.reduce((a,r)=>a+r.units,0)||1; let cum=0;
+  for(const r of rows){ r.share=r.units/tot; r.cls = cum<0.8 ? "A" : cum<0.95 ? "B" : "C"; cum+=r.share; r.cum=cum; }
+  for(const r of rows){
+    const special = r.sku.temp_class!=="ambient" || r.sku.unit_weight_kg>=4;
+    r.advice = special||!r.zone ? null : (r.cls==="A" && (r.zone==="B"||r.zone==="C")) ? "Move to zone A" : (r.cls==="C" && r.zone==="A") ? "Move out of zone A" : null;
+  }
+  return {rows, tot, W};
+}
+function renderReorder(){
+  $("#roWin").value=String(RO.window); $("#roLead").value=RO.lead; $("#roSvc").value=String(RO.service);
+  const A=analyse(), rows=A.rows, best=rows.filter(r=>r.cls==="A"), worst=rows.filter(r=>r.cls==="C").sort((a,b)=>a.units-b.units);
+  const need=rows.filter(r=>r.status!=="ok"), out=rows.filter(r=>r.status==="out");
+  const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
+  const pl=n=>n===1?"SKU":"SKUs";
+  $("#roKpis").innerHTML = k("Best movers", `${best.length} ${pl(best.length)}`, `sell 80% of everything (out of ${rows.length} SKUs)`)
+    + k("Worst movers", `${worst.length} ${pl(worst.length)}`, `sell only ${fmtPct(worst.reduce((a,r)=>a+r.share,0))} of everything`)
+    + k("Order today", `${need.length} ${pl(need.length)}`, `${fmtN(need.reduce((a,r)=>a+r.order,0))} units to order`, need.length?"sev-warn":"sev-good")
+    + k("Out of stock", `${out.length} ${pl(out.length)}`, "nothing left to sell", out.length?"sev-bad":"sev-good");
+  const shelf=r=>`${r.home?locChip(r.home):'<span class="pill bad">no shelf</span>'}${r.advice?` <span class="pill warn">${r.advice}</span>`:""}`;
+  $("#roBestN").textContent=best.length; $("#roWorstN").textContent=worst.length;
+  $("#roBest").innerHTML=best.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">${fmtPct(r.share)}</td><td class="n">${fmtPct(r.cum)}</td><td>${shelf(r)}</td></tr>`).join("");
+  $("#roWorst").innerHTML=worst.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.units}</td><td class="n">${r.onHand}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(0):"no sales"}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No SKUs in the tail.</td></tr>`;
+  const rank={out:0,order:1,ok:2};
+  const all=rows.slice().sort((a,b)=>rank[a.status]-rank[b.status] || a.daysLeft-b.daysLeft);
+  $("#roOrderN").textContent=`${need.length} to order`;
+  const pill={out:'<span class="pill bad">Out of stock</span>', order:'<span class="pill warn">Order now</span>', ok:'<span class="pill good">OK</span>'};
+  $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">±${r.sd.toFixed(1)}</td>
+    <td class="n"><input type="number" class="lt" data-sku="${esc(r.sku.sku_id)}" value="${r.ownLead?r.L:""}" placeholder="${RO.lead}" min="0" step="0.5" style="width:70px;text-align:right;padding:4px 6px" aria-label="Lead time for ${esc(r.sku.name)}"></td>
+    <td class="n">${r.ss}</td><td class="n"><b>${r.rop}</b></td><td class="n">${r.onHand}</td><td class="n">${r.onOrder||""}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(1):"—"}</td><td class="n"><b>${r.order||""}</b></td><td>${pill[r.status]}</td></tr>`).join("");
+}
+async function setLeadTime(sku_id, raw){
+  const v = raw==="" ? null : Math.max(0, +raw);
+  if(MODE==="supabase"){ const {error}=await sb.from("skus").update({lead_time_days:v}).eq("sku_id",sku_id); if(error){ msg("#sbMsg","err",esc(error.message)); return; } }
+  const s=I.sku.get(sku_id); if(s) s.lead_time_days=v; renderReorder();
+}
+
+// ======================================================================
+// Relocation (80/20 zone rule + space and weight limits)
+// ======================================================================
+const DENSITY={Dairy:0.85,Frozen:0.35,Bakery:0.15,"Instant food":0.3,Biscuits:0.5,Snacks:0.06,Beverages:0.9,Staples:0.8,"Home care":0.65,"Personal care":0.55,Baby:0.17};
+function unitVol(s){ if(s.unit_volume_cm3) return {v:+s.unit_volume_cm3, est:false}; return {v:(+s.unit_weight_kg||0.1)/(DENSITY[s.category]||0.4)*1000, est:true}; }
+function slotLoad(){
+  const occ=new Map();
+  for(const r of I.stock.values()){ if(r.qty<=0) continue; const s=I.sku.get(r.sku_id); if(!s) continue;
+    let o=occ.get(r.location_code); if(!o){ o={vol:0, kg:0, items:[]}; occ.set(r.location_code,o); }
+    o.vol+=r.qty*unitVol(s).v; o.kg+=r.qty*(+s.unit_weight_kg||0); o.items.push({sku_id:r.sku_id, qty:r.qty}); }
+  return occ;
+}
+function planRelocation(){
+  const an=analyse(), by=new Map(an.rows.map(r=>[r.sku.sku_id,r])), occ=slotLoad();
+  const get=c=>occ.get(c)||(occ.set(c,{vol:0,kg:0,items:[]}),occ.get(c));
+  const over=[...occ.entries()].map(([c,o])=>{ const L=I.loc.get(c); return {code:c, L, o, snap:o.items.map(i=>({...i})), pv:o.vol/L.capacity_cm3, pk:o.kg/L.max_weight_kg}; }).filter(x=>x.pv>1||x.pk>1).sort((a,b)=>Math.max(b.pv,b.pk)-Math.max(a.pv,a.pk));
+  const target=r=>{ const s=r.sku; if(s.temp_class!=="ambient") return null; if(s.unit_weight_kg>=4) return "H"; return r.cls; };
+  const cands=[];
+  for(const r of an.rows){
+    const t=target(r), slot=r.home; if(!t||!slot) continue; const z=I.loc.get(slot).zone;
+    if(z===t) continue;
+    const pri = (z==="A" && t!=="A") ? 0 : (t==="A") ? 1 : 2;
+    cands.push({r, from:slot, tz:t, pri, why: pri===0 ? `Class ${r.cls} taking a zone A slot` : t==="A" ? `Best mover sitting in zone ${z}` : `Class ${r.cls} belongs in zone ${t}, not ${z}`});
+  }
+  cands.sort((a,b)=>a.pri-b.pri || (a.pri===1 ? b.r.avg-a.r.avg : a.r.avg-b.r.avg));
+  const fit=(L,s)=>{ const o=get(L.code); if(o.items.some(i=>i.sku_id!==s.sku_id && i.qty>0)) return 0;
+    const u=unitVol(s).v, w=+s.unit_weight_kg||0.01; return Math.max(0,Math.floor(Math.min((L.capacity_cm3-o.vol)/u,(L.max_weight_kg-o.kg)/w))); };
+  const levelPref=(cls,sh)=> cls==="A" ? ({B:0,C:1,A:2,D:3}[sh]??4) : ({D:0,A:1,C:2,B:3}[sh]??4);
+  const moves=[];
+  const apply=(s,from,to,q)=>{ const u=unitVol(s).v, w=+s.unit_weight_kg||0;
+    const f=get(from); f.vol-=q*u; f.kg-=q*w; const fi=f.items.find(i=>i.sku_id===s.sku_id); if(fi) fi.qty-=q;
+    const t=get(to); t.vol+=q*u; t.kg+=q*w; const ti=t.items.find(i=>i.sku_id===s.sku_id); if(ti) ti.qty+=q; else t.items.push({sku_id:s.sku_id, qty:q}); };
+  const destFor=(s,cls,zone,need,exclude)=>{
+    const opts=S.locations.filter(L=>L.is_active && !L.is_reserve && L.zone===zone && L.temp_class===s.temp_class && L.code!==exclude)
+      .map(L=>({L, f:fit(L,s)})).filter(x=>x.f>0)
+      .sort((a,b)=> (b.f>=need)-(a.f>=need) || levelPref(cls,a.L.shelf)-levelPref(cls,b.L.shelf) || a.L.code.localeCompare(b.L.code));
+    return opts[0]||null; };
+  for(const c of cands){
+    const s=c.r.sku, onShelf=(I.stock.get(s.sku_id+"|"+c.from)?.qty)||0; if(onShelf<=0) continue;
+    const d=destFor(s,c.r.cls,c.tz,onShelf,c.from);
+    if(!d){ moves.push({...c, s, onShelf, qty:0, to:null, blocked:`No free slot in zone ${c.tz}. Free space there first.`}); continue; }
+    const q=Math.min(onShelf,d.f); apply(s,c.from,d.L.code,q);
+    if(q<onShelf){ const f=get(c.from), u=unitVol(s).v, w=+s.unit_weight_kg||0; f.vol-=(onShelf-q)*u; f.kg-=(onShelf-q)*w; const fi=f.items.find(i=>i.sku_id===s.sku_id); if(fi) fi.qty-=onShelf-q; }
+    moves.push({...c, s, onShelf, qty:q, to:d.L.code, reserve:onShelf-q});
+  }
+  // Split overfull slots that the zone moves did not already fix
+  for(const x of over){
+    const o=get(x.code), L=x.L; if(o.vol<=L.capacity_cm3 && o.kg<=L.max_weight_kg) continue;
+    const it=o.items.filter(i=>i.qty>0).sort((a,b)=>b.qty-a.qty)[0]; if(!it) continue;
+    const s=I.sku.get(it.sku_id), r=by.get(it.sku_id), u=unitVol(s).v, w=+s.unit_weight_kg||0.01;
+    const excess=Math.ceil(Math.max((o.vol-L.capacity_cm3)/u,(o.kg-L.max_weight_kg)/w));
+    const why=`Slot over its ${o.kg>L.max_weight_kg?"weight":"space"} limit`;
+    const q=Math.min(it.qty,excess); o.vol-=q*u; o.kg-=q*w; it.qty-=q;
+    moves.push({r, s, from:L.code, onShelf:it.qty+q, qty:q, to:"RESERVE", why});
+  }
+  for(const m of moves){ if(!m.to) continue; const u=unitVol(m.s); m.vol=m.qty*u.v/1000; m.est=u.est; m.kg=m.qty*(+m.s.unit_weight_kg||0); if(m.to==="RESERVE") continue; const L=I.loc.get(m.to), o=get(m.to); m.pv=o.vol/L.capacity_cm3; m.pk=o.kg/L.max_weight_kg; }
+  return {moves, over};
+}
+function fillBar(p){ const c=p>1?"var(--bad)":p>0.85?"var(--warn)":"var(--good)"; return `<div class="row" style="gap:6px;flex-wrap:nowrap;align-items:center"><div class="bar" style="flex:1;min-width:50px"><i style="width:${Math.min(100,p*100).toFixed(0)}%;background:${c}"></i></div><span class="small" style="width:40px;text-align:right">${(p*100).toFixed(0)}%</span></div>`; }
+function renderRelocate(){
+  const P=planRelocation(), ok=P.moves.filter(m=>m.to), blocked=P.moves.filter(m=>!m.to);
+  const overV=P.over.filter(x=>x.pv>1).length, overK=P.over.filter(x=>x.pk>1).length;
+  const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
+  $("#rlKpis").innerHTML = k("Moves to make", ok.length, blocked.length?`${blocked.length} blocked: no room`:"all fit", ok.length?"sev-warn":"sev-good")
+    + k("Units to move", fmtN(ok.reduce((a,m)=>a+m.qty+(m.reserve||0),0)), `${ok.reduce((a,m)=>a+m.vol,0).toFixed(0)} litres · ${ok.reduce((a,m)=>a+m.kg,0).toFixed(0)} kg`)
+    + k("Slots over space", overV, "Holding more than fits", overV?"sev-bad":"sev-good")
+    + k("Slots over weight", overK, "Heavier than the shelf is rated for", overK?"sev-bad":"sev-good");
+  $("#rlN").textContent=P.moves.length;
+  $("#rlBody").innerHTML = P.moves.map((m,i)=>`<tr><td>${i+1}</td><td>${esc(m.s.name)}</td><td>${m.r?.cls||"—"}</td><td class="n">${m.r?m.r.avg.toFixed(1):"—"}</td><td>${locChip(m.from)}</td><td class="n">${m.onShelf}</td>
+    <td class="n"><b>${m.qty||"—"}</b>${m.reserve?`<br><span class="small muted">+${m.reserve} to reserve</span>`:""}</td><td>${m.to==="RESERVE"?'<span class="pill neutral">Reserve</span>':m.to?locChip(m.to):'<span class="pill bad">no room</span>'}</td>
+    <td class="n">${m.to?`${m.vol.toFixed(1)} L${m.est?' <span class="pill warn">est.</span>':""}`:""}</td><td class="n">${m.to?m.kg.toFixed(1)+" kg":""}</td>
+    <td>${m.to==="RESERVE"?'<span class="small muted">Back stock, refills this slot</span>':m.to?`<div class="small muted">space</div>${fillBar(m.pv)}<div class="small muted">weight</div>${fillBar(m.pk)}`:`<span class="small">${esc(m.blocked)}</span>`}</td><td class="small">${esc(m.why)}</td></tr>`).join("") || `<tr><td colspan="12" class="muted">Nothing to move. Every SKU is in its zone and every slot is within its limits.</td></tr>`;
+  $("#rlOverN").textContent=P.over.length;
+  $("#rlOver").innerHTML = P.over.map(x=>`<tr><td>${locChip(x.code)}</td><td>${x.snap.filter(i=>i.qty>0).map(i=>`${esc(I.sku.get(i.sku_id)?.name)} × ${i.qty}`).join("<br>")}</td><td class="n">${x.snap.reduce((a,i)=>a+Math.max(0,i.qty),0)}</td><td>${fillBar(x.pv)}</td><td>${fillBar(x.pk)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">Every slot is within its space and weight limit.</td></tr>`;
+  const cats=[...new Set(S.skus.map(s=>s.category))].sort();
+  $("#rlDens").innerHTML = cats.map(c=>`<tr><td>${esc(c)}</td><td class="n">${(DENSITY[c]||0.4).toFixed(2)}</td><td class="n">${S.skus.filter(s=>s.category===c && !s.unit_volume_cm3).length}</td></tr>`).join("");
+}
+
+// ======================================================================
+// Inventory
+// ======================================================================
+const INV={sort:"status", dir:1};
+const INV_COLS=[["name","Product"],["category","Category"],["cls","Class"],["book","Book",1],["shelf","Shelf",1],["onOrder","On order",1],["avg","Sales/day",1],["days","Days of cover",1],["rop","Reorder point",1],["litres","Space",1],["kg","Weight",1],["where","Where it is"],["last","Last moved"],["status","Status"]];
+function renderInventory(){
+  const cats=[...new Set(S.skus.map(s=>s.category))].sort(), cs=$("#invCat"), cur=cs.value;
+  cs.innerHTML=`<option value="">All</option>`+cats.map(c=>`<option>${esc(c)}</option>`).join(""); cs.value=cats.includes(cur)?cur:"";
+  const an=analyse(), q=$("#invQ").value.trim().toLowerCase(), cat=cs.value, st=$("#invSt").value;
+  const rank={out:0,order:1,ok:2};
+  let rows=an.rows.map(r=>{ const s=r.sku, locs=(I.stockBySku.get(s.sku_id)||[]).filter(x=>x.qty!==0);
+    const shelf=locs.reduce((a,x)=>a+x.qty,0), u=unitVol(s);
+    return {r, s, name:s.name, category:s.category, cls:r.cls, book:r.onHand, shelf, onOrder:r.onOrder, avg:r.avg, days:r.daysLeft, rop:r.rop,
+      litres:Math.max(0,shelf)*u.v/1000, est:u.est, kg:Math.max(0,shelf)*(+s.unit_weight_kg||0), locs, last:Math.max(0,...locs.map(x=>x.last)), status:r.status, gap:shelf-r.onHand, where:locs.length}; });
+  const all=rows;
+  if(q) rows=rows.filter(x=>x.name.toLowerCase().includes(q)||String(x.s.barcode).includes(q)||x.locs.some(l=>l.location_code.toLowerCase().startsWith(q)));
+  if(cat) rows=rows.filter(x=>x.category===cat);
+  if(st) rows=rows.filter(x=> st==="gap" ? x.gap!==0 : x.status===st);
+  const key=INV.sort, d=INV.dir;
+  rows.sort((a,b)=>{ let va=a[key], vb=b[key]; if(key==="status"){ va=rank[a.status]; vb=rank[b.status]; }
+    if(typeof va==="string") return d*va.localeCompare(vb); if(!isFinite(va)) va=1e12; if(!isFinite(vb)) vb=1e12; return d*(va-vb) || a.name.localeCompare(b.name); });
+  const sum=(a,f)=>a.reduce((t,x)=>t+f(x),0);
+  const k=(l,v,dd,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${dd}</span></div>`;
+  const gaps=all.filter(x=>x.gap!==0).length, outs=all.filter(x=>x.status==="out").length;
+  $("#invKpis").innerHTML = k("Units on book", fmtN(sum(all,x=>Math.max(0,x.book))), `across ${all.length} SKUs`)
+    + k("Shelf space used", `${fmtN(sum(all,x=>x.litres))} L`, `${fmtN(sum(all,x=>x.kg))} kg on the racks`)
+    + k("Book ≠ shelf", `${gaps} SKUs`, "a scan was missed somewhere", gaps?"sev-warn":"sev-good")
+    + k("Out of stock", `${outs} SKUs`, "nothing left to sell", outs?"sev-bad":"sev-good");
+  $("#invHead").innerHTML=INV_COLS.map(([c,l,n])=>`<th class="${n?"n":""}" style="cursor:pointer" data-sort="${c}" aria-sort="${INV.sort===c?(INV.dir>0?"ascending":"descending"):"none"}">${l}${INV.sort===c?(INV.dir>0?" ▲":" ▼"):""}</th>`).join("");
+  const pill={out:'<span class="pill bad">Out of stock</span>', order:'<span class="pill warn">Order now</span>', ok:'<span class="pill good">OK</span>'};
+  $("#invN").textContent = rows.length===all.length ? `${all.length} SKUs` : `${rows.length} of ${all.length} SKUs`;
+  $("#invBody").innerHTML = rows.map(x=>`<tr><td><b>${esc(x.name)}</b><br><span class="code">${esc(x.s.barcode)}</span></td><td class="small">${esc(x.category)}${x.s.temp_class!=="ambient"?` <span class="pill neutral">${esc(x.s.temp_class)}</span>`:""}</td><td>${x.cls}</td>
+    <td class="n">${x.book}</td><td class="n">${x.gap?`<b style="color:var(--bad)">${x.shelf}</b>`:x.shelf}</td><td class="n">${x.onOrder||""}</td><td class="n">${x.avg.toFixed(1)}</td>
+    <td class="n">${isFinite(x.days)?x.days.toFixed(1):"no sales"}</td><td class="n">${x.rop}</td><td class="n" style="white-space:nowrap">${x.litres.toFixed(1)} L${x.est?' <span class="pill warn">est.</span>':""}</td><td class="n" style="white-space:nowrap">${x.kg.toFixed(1)} kg</td>
+    <td>${x.locs.length?x.locs.sort((a,b)=>b.qty-a.qty).map(l=>`<span style="white-space:nowrap">${locChip(l.location_code)} <span class="small ${l.qty<0?"":"muted"}" ${l.qty<0?'style="color:var(--bad)"':""}>${l.qty}</span></span>`).join("<br>"):'<span class="pill bad">no shelf</span>'}</td>
+    <td class="small muted">${x.last?ago(x.last):"—"}</td><td>${pill[x.status]}${x.gap?` <span class="pill warn">gap ${x.gap>0?"+":""}${x.gap}</span>`:""}</td></tr>`).join("") || `<tr><td colspan="14" class="muted">No SKU matches these filters.</td></tr>`;
+}
+
+// ======================================================================
+// Orders (from the shop)
+// ======================================================================
+const NEXT={placed:["picking","Start picking"], picking:["packed","Packed"], packed:["dispatched","Hand to rider"]};
+const ST_LABEL={placed:"New", picking:"Picking", packed:"Packed", dispatched:"Dispatched", cancelled:"Cancelled"};
+function renderOrders(){
+  const open=S.sales_orders.filter(o=>["placed","picking","packed"].includes(o.status)).sort((a,b)=>ms(a.placed_at)-ms(b.placed_at));
+  const n=st=>open.filter(o=>o.status===st).length, oldest=open.length?(NOW-ms(open[0].placed_at))/60000:0;
+  const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
+  $("#ordKpis").innerHTML = k("New", n("placed"), "waiting to be picked", n("placed")?"sev-warn":"")
+    + k("Picking", n("picking"), "on the floor now") + k("Packed", n("packed"), "waiting for a rider")
+    + k("Oldest open", open.length?`${Math.round(oldest)} min`:"—", "since the customer ordered", oldest>15?"sev-bad":oldest>10?"sev-warn":"sev-good");
+  const avail=WMSCore.availability(S);
+  $("#ordList").innerHTML = open.map(o=>{
+    const age=Math.round((NOW-ms(o.placed_at))/60000), lines=(I.linesByOrder.get(o.order_id)||[]).map(l=>{
+      const st=(I.stockBySku.get(l.sku_id)||[]).filter(r=>r.qty>0), s=I.sku.get(l.sku_id);
+      return {l, s, loc: st.length?st[0].location_code:null, walk: st.length?I.loc.get(st[0].location_code).walk_m:999, short: (avail.get(l.sku_id)??0)<0}; }).sort((a,b)=>a.walk-b.walk);
+    const nx=NEXT[o.status];
+    return `<div class="panel ordcard"><div class="row" style="justify-content:space-between;align-items:center">
+        <div><b class="code" style="font-size:.95rem;color:var(--ink)">${esc(o.order_id)}</b> <span class="pill ${o.source==="shop"?"live":"neutral"}">${o.source==="shop"?"Shop":"OMS"}</span></div>
+        <span class="pill ${age>15?"bad":age>10?"warn":"good"}">${age} min</span></div>
+      ${o.customer_name?`<p class="small">${esc(o.customer_name)} · <span class="muted">${esc(o.address||"")}</span></p>`:""}
+      <div class="tw"><table><thead><tr><th>Pick from</th><th>Product</th><th class="n">Qty</th></tr></thead><tbody>
+        ${lines.map(x=>`<tr><td>${x.loc?locChip(x.loc):'<span class="pill bad">no shelf</span>'}</td><td>${esc(x.s?.name||x.l.sku_id)}${x.short?' <span class="pill bad">short</span>':""}</td><td class="n"><b>${x.l.qty}</b></td></tr>`).join("")}
+      </tbody></table></div>
+      <div class="row" style="justify-content:space-between;align-items:center"><span class="pill neutral">${ST_LABEL[o.status]}</span>${o.total_inr?`<span class="small">₹${fmtN(o.total_inr)}</span>`:""}
+        <button class="primary" data-advance="${esc(o.order_id)}" data-to="${nx[0]}">${nx[1]}</button></div></div>`;
+  }).join("") || `<div class="panel"><p class="muted">No open orders. New shop orders appear here as soon as they are placed.</p></div>`;
+}
+async function setOrderStatus(id, status){
+  const o=I.order.get(id); if(!o) return;
+  const patch={status}; if(status==="dispatched") patch.dispatched_at=new Date().toISOString();
+  if(MODE==="supabase"){ const {error}=await sb.from("sales_orders").update(patch).eq("order_id",id); if(error){ msg("#sbMsg","err",esc(error.message)); return; } }
+  Object.assign(o,patch);
+  if(o.source==="shop"){ const list=WMSCore.loadShopOrders(); const so=list.find(x=>x.order_id===id); if(so){ Object.assign(so,patch); WMSCore.saveShopOrders(list); } }
+  reindex(); render();
+}
+
+// ======================================================================
+// FAILURES dashboard
+// ======================================================================
+function renderFailures(){
+  const days=+$("#fPer").value;
+  const inL=inboundLines(days).filter(r=>!r.pending), outL=outboundLines(days);
+  const pendingIn=inboundLines(days).filter(r=>r.pending);
+  const sum=(a,f)=>a.reduce((s,r)=>s+f(r),0);
+  const inExp=sum(inL,r=>r.expected), inMiss=sum(inL,gapOf), outExp=sum(outL,r=>r.expected), outMiss=sum(outL,gapOf);
+  const inComp = inExp? 1-inMiss/inExp : null, outComp = outExp? 1-outMiss/outExp : null;
+  const dbl=sum(inL,overOf)+sum(outL,overOf);
+  const neg=[...I.stock.values()].filter(r=>r.qty<0);
+  const short=sum(inL,r=>r.short);
+  const sev=v=> v==null?"": v>=0.99?"sev-good": v>=0.97?"sev-warn":"sev-bad";
+  const k=(l,v,d,s)=>`<div class="kpi ${s||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
+  $("#fKpis").innerHTML = k("Inbound compliance", fmtPct(inComp), `${fmtN(inExp-inMiss)} of ${fmtN(inExp)} units scanned in`, sev(inComp))
+    + k("Outbound compliance", fmtPct(outComp), `${fmtN(outExp-outMiss)} of ${fmtN(outExp)} units scanned out`, sev(outComp))
+    + k("Missed IN units", fmtN(inMiss), `${inL.filter(r=>gapOf(r)>0).length} lines · ${pendingIn.length} still inside 4 h`, inMiss?"sev-bad":"sev-good")
+    + k("Missed OUT units", fmtN(outMiss), `${outL.filter(r=>gapOf(r)>0).length} order lines`, outMiss?"sev-bad":"sev-good")
+    + k("Negative shelves", neg.length, "Proven missed IN scans", neg.length?"sev-bad":"sev-good")
+    + k("Supplier short", fmtN(short), `Units ordered, not delivered${dbl?` · ${dbl} double-scanned`:""}`, "");
+
+  // daily series
+  const dayKey=t=>{ const d=new Date(t); d.setHours(0,0,0,0); return d.getTime(); };
+  const today=dayKey(NOW), keys=[]; for(let i=days-1;i>=0;i--) keys.push(today-i*DAY);
+  const agg=(L)=>keys.map(kk=>{ const ls2=L.filter(r=>dayKey(r.t)===kk); const e=sum(ls2,r=>r.expected), m=sum(ls2,gapOf); return e? {v:1-m/e, e, m}:null; });
+  lineChart($("#fLine"), $("#fTip"), keys, [{name:"Inbound", color:"var(--s1)", pts:agg(inL)},{name:"Outbound", color:"var(--s2)", pts:agg(outL)}]);
+  const hours=[]; for(let h=7;h<=23;h++) hours.push({h, m:sum(outL.filter(r=>r.hour===h),gapOf), e:sum(outL.filter(r=>r.hour===h),r=>r.expected)});
+  barChart($("#fHour"), $("#fTip2"), hours);
+
+  // operators
+  const ops=new Map();
+  for(const r of [...inL,...outL]){ const key=r.owner+"|"+r.det; let o=ops.get(key); if(!o){o={op:r.owner, st:r.det, lines:0, gapLines:0, miss:0, exp:0, dbl:0}; ops.set(key,o);} o.lines++; o.exp+=r.expected; const g=gapOf(r); o.miss+=g; if(g>0) o.gapLines++; o.dbl+=overOf(r)>0?1:0; }
+  $("#fOps").innerHTML=[...ops.values()].sort((a,b)=>b.miss/b.exp-a.miss/a.exp).map(o=>{ const c=1-o.miss/o.exp;
+    return `<tr><td><b>${esc(o.op)}</b></td><td><span class="tag">${o.st}</span></td><td class="n">${o.lines}</td><td class="n">${o.gapLines}</td><td class="n">${o.miss}</td><td class="n">${o.dbl}</td>
+      <td><div class="row" style="gap:8px;flex-wrap:nowrap;align-items:center"><div class="bar" style="flex:1"><i style="width:${(c*100).toFixed(1)}%;background:${c>=.99?"var(--good)":c>=.97?"var(--warn)":"var(--bad)"}"></i></div><span class="small" style="width:52px;text-align:right">${fmtPct(c)}</span></div></td></tr>`; }).join("");
+
+  // reconciliation
+  const rec=S.skus.map(s=>{ const book=bookQty(s.sku_id), shelf=(I.stockBySku.get(s.sku_id)||[]).reduce((a,r)=>a+r.qty,0); return {s, book, shelf, gap:shelf-book}; }).filter(r=>r.gap!==0).sort((a,b)=>Math.abs(b.gap)-Math.abs(a.gap)).slice(0,12);
+  $("#fRecon").innerHTML = rec.map(r=>`<tr class="click" data-find="${esc(r.s.name)}"><td>${esc(r.s.name)}</td><td class="n">${r.book}</td><td class="n">${r.shelf}</td><td class="n"><b style="color:var(--bad)">${r.gap>0?"+":""}${r.gap}</b></td><td class="small">${r.gap>0?"Missed OUT scan":"Missed IN scan, or shrinkage"}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">Book and shelf agree for every SKU.</td></tr>`;
+  $("#fNeg").innerHTML = neg.sort((a,b)=>a.qty-b.qty).slice(0,12).map(r=>`<tr><td>${locChip(r.location_code)}</td><td>${esc(I.sku.get(r.sku_id).name)}</td><td class="n"><b style="color:var(--bad)">${r.qty}</b></td><td class="small muted">${ago(r.last)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No shelf is below zero.</td></tr>`;
+
+  const gl=[...inL,...outL].filter(r=>gapOf(r)>0||overOf(r)>0).sort((a,b)=>b.t-a.t);
+  $("#fLinesN").textContent=gl.length;
+  $("#fLines").innerHTML = gl.slice(0,60).map(r=>`<tr><td class="small">${dt(r.t)}</td><td><span class="tag">${r.det}</span> <span class="small muted">${r.kind}</span></td><td class="code">${esc(r.ref)}</td><td>${esc(I.sku.get(r.sku_id).name)}</td><td class="n">${r.expected}</td><td class="n">${r.scanned}</td><td class="n"><b style="color:${overOf(r)>0?"var(--warn)":"var(--bad)"}">${overOf(r)>0?"+"+overOf(r):"−"+gapOf(r)}</b></td><td>${esc(r.owner)}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No gaps in this period.</td></tr>`;
+}
+
+function lineChart(host, tip, keys, series){
+  const W=560,H=230,pl=44,pr=14,pt=12,pb=28;
+  let lo=1; for(const s of series) for(const p of s.pts) if(p) lo=Math.min(lo,p.v);
+  lo=Math.max(0,Math.floor((lo-0.01)*50)/50); const hi=1;
+  const x=i=>pl+(keys.length<2?0:i*(W-pl-pr)/(keys.length-1)), y=v=>pt+(hi-v)/(hi-lo||1)*(H-pt-pb);
+  let g=""; const ticks=5; for(let i=0;i<=ticks;i++){ const v=lo+(hi-lo)*i/ticks; g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${(v*100).toFixed(0)}%</text>`; }
+  keys.forEach((kk,i)=>{ if(keys.length>8 && i%2) return; const d=new Date(kk); g+=`<text x="${x(i)}" y="${H-8}" text-anchor="middle">${d.getDate()} ${d.toLocaleString("en-IN",{month:"short"})}</text>`; });
+  let lines="";
+  for(const s of series){ let d=""; s.pts.forEach((p,i)=>{ if(!p) return; d+=(d?"L":"M")+x(i).toFixed(1)+" "+y(p.v).toFixed(1); });
+    lines+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const li=s.pts.map((p,i)=>p?i:-1).filter(i=>i>=0).pop(); if(li!=null) lines+=`<circle cx="${x(li)}" cy="${y(s.pts[li].v)}" r="4" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>`; }
+  host.querySelector("svg")?.remove();
+  host.insertAdjacentHTML("afterbegin",`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily scan compliance, inbound and outbound">${g}${lines}<line id="xh" x1="0" x2="0" y1="${pt}" y2="${H-pb}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/><rect x="${pl}" y="${pt}" width="${W-pl-pr}" height="${H-pt-pb}" fill="transparent" id="hit"/></svg>`);
+  const svg=host.querySelector("svg"), xh=svg.querySelector("#xh");
+  svg.querySelector("#hit").addEventListener("mousemove",ev=>{
+    const r=svg.getBoundingClientRect(), sx=(ev.clientX-r.left)*W/r.width; const i=Math.max(0,Math.min(keys.length-1,Math.round((sx-pl)/((W-pl-pr)/(keys.length-1||1)))));
+    xh.setAttribute("x1",x(i)); xh.setAttribute("x2",x(i)); xh.setAttribute("opacity",".5");
+    const d=new Date(keys[i]); tip.hidden=false;
+    tip.innerHTML=`<b>${d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})}</b><br>`+series.map(s=>{ const p=s.pts[i]; return `${s.name}: ${p?fmtPct(p.v)+` (${p.m} missed of ${p.e})`:"no data"}`; }).join("<br>");
+    tip.style.left=(x(i)*r.width/W)+"px"; tip.style.top=(pt*r.height/H+10)+"px"; tip.style.transform = i>keys.length*0.6 ? "translate(-105%,0)" : "translate(5%,0)";
+  });
+  svg.querySelector("#hit").addEventListener("mouseleave",()=>{ tip.hidden=true; xh.setAttribute("opacity","0"); });
+}
+function barChart(host, tip, data){
+  const W=560,H=230,pl=36,pr=10,pt=12,pb=28; const max=Math.max(1,...data.map(d=>d.m));
+  const nice=Math.ceil(max/ (max>20?10:max>8?4:2))*(max>20?10:max>8?4:2);
+  const bw=(W-pl-pr)/data.length, y=v=>pt+(1-v/nice)*(H-pt-pb);
+  let g=""; for(let i=0;i<=4;i++){ const v=nice*i/4; g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${Math.round(v)}</text>`; }
+  let bars=""; data.forEach((d,i)=>{ const x0=pl+i*bw+2, w=bw-4, h=y(0)-y(d.m);
+    if(d.m>0) bars+=`<path d="M${x0} ${y(0)} V${y(d.m)+Math.min(4,h)} q0 -4 4 -4 H${x0+w-4} q4 0 4 4 V${y(0)} Z" fill="var(--s2)"/>`;
+    bars+=`<rect x="${pl+i*bw}" y="${pt}" width="${bw}" height="${H-pt-pb}" fill="transparent" data-i="${i}"/>`;
+    if(i%2===0) g+=`<text x="${x0+w/2}" y="${H-8}" text-anchor="middle">${d.h}:00</text>`; });
+  host.querySelector("svg")?.remove();
+  host.insertAdjacentHTML("afterbegin",`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Missed outbound units by hour of day">${g}${bars}</svg>`);
+  const svg=host.querySelector("svg");
+  svg.querySelectorAll("rect[data-i]").forEach(rc=>{ rc.addEventListener("mousemove",()=>{ const d=data[+rc.dataset.i], r=svg.getBoundingClientRect();
+    tip.hidden=false; tip.innerHTML=`<b>${d.h}:00–${d.h+1}:00</b><br>${d.m} missed of ${d.e} units dispatched${d.e?` (${fmtPct(d.m/d.e)})`:""}`;
+    tip.style.left=((+rc.getAttribute("x")+bw/2)*r.width/W)+"px"; tip.style.top=(y(d.m)*r.height/H)+"px"; tip.style.transform="translate(-50%,-110%)"; });
+    rc.addEventListener("mouseleave",()=>tip.hidden=true); });
+}
+
+// ======================================================================
+// Routing & events
+// ======================================================================
+const VIEWS=["orders","map","inventory","reorder","relocate","failures","setup"];
+function route(){
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map";
+  for(const n of VIEWS) $("#v-"+n).hidden = n!==v;
+  document.querySelectorAll("#tabs a").forEach(a=>a.setAttribute("aria-current", a.getAttribute("href")==="#"+v ? "page" : "false"));
+  render(v);
+}
+function render(v){
+  v = v || (VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map");
+  const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
+  $("#modePill").className="pill "+(MODE==="demo"?"demo":"live"); $("#modePill").textContent = MODE==="demo" ? "Demo data" : "Supabase · live";
+  if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures();
+}
+function focusSlot(code){
+  MAP.sel=code; if(location.hash!=="#map"){ location.hash="#map"; } else renderMap();
+  setTimeout(()=>{ document.querySelector(`.slot[data-cell="${CSS.escape(code)}"]`)?.scrollIntoView({block:"center",behavior:"smooth"}); },30);
+}
+let refreshTimer=null;
+function scheduleRefresh(){
+  clearInterval(refreshTimer); const sec=+($("#cfgRefresh").value||0); ls.set("shelfledger.refresh",sec);
+  if(sec>0) refreshTimer=setInterval(async()=>{ if(MODE!=="supabase") return; try{ await loadAll(); render(); }catch(e){} }, sec*1000);
+}
+function boot(){
+  document.addEventListener("click", e=>{
+    const cell=e.target.closest(".slot[data-cell]"); if(cell){ MAP.sel = MAP.sel===cell.dataset.cell ? null : cell.dataset.cell; renderMap(); return; }
+    const bay=e.target.closest(".bayr[data-rack]"); if(bay){ document.getElementById("rack-"+bay.dataset.rack)?.scrollIntoView({behavior:"smooth",block:"start"}); return; }
+    if(e.target.closest("#mapClose")){ MAP.sel=null; renderMap(); return; }
+    const adv=e.target.closest("[data-advance]"); if(adv){ setOrderStatus(adv.dataset.advance, adv.dataset.to); return; }
+    const f=e.target.closest("[data-find]"); if(f){ $("#mapQ").value=f.dataset.find; MAP.sel=null; location.hash="#map"; return; }
+    const lc=e.target.closest(".loc[data-loc]"); if(lc){ focusSlot(lc.dataset.loc); }
+  });
+  $("#mapQ").addEventListener("input",renderMap);
+  $("#mapQ").addEventListener("keydown",e=>{ if(e.key==="Enter" && MAP.firstHit) focusSlot(MAP.firstHit); });
+  $("#mapLayer").onchange=renderMap;
+  $("#invQ").addEventListener("input",renderInventory); $("#invCat").onchange=renderInventory; $("#invSt").onchange=renderInventory;
+  $("#invHead").addEventListener("click",e=>{ const th=e.target.closest("th[data-sort]"); if(!th) return; const c=th.dataset.sort; if(c==="where") return; INV.dir = INV.sort===c ? -INV.dir : (["name","category","cls","status"].includes(c)?1:-1); INV.sort=c; renderInventory(); });
+  const roSave=()=>{ RO.window=+$("#roWin").value; RO.lead=Math.max(0,+$("#roLead").value||0); RO.service=+$("#roSvc").value; ls.set("shelfledger.ro",RO); renderReorder(); };
+  ["#roWin","#roLead","#roSvc"].forEach(id=>$(id).addEventListener("change",roSave));
+  document.addEventListener("change",e=>{ const lt=e.target.closest("input.lt"); if(lt) setLeadTime(lt.dataset.sku, lt.value.trim()); });
+  $("#fPer").onchange=renderFailures;
+  $("#sbUrl").value=ls.get("shelfledger.sbUrl",""); $("#sbKey").value=ls.get("shelfledger.sbKey","");
+  $("#cfgRefresh").value=String(ls.get("shelfledger.refresh",60)); $("#cfgRefresh").onchange=scheduleRefresh;
+  $("#sbConnect").onclick=connectSupabase;
+  $("#sbDemo").onclick=()=>{ MODE="demo"; sb=null; S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); $("#sbSeed").disabled=true; msg("#sbMsg","info","Back on demo data."); render("setup"); };
+  $("#sbSeed").onclick=seedSupabase;
+  window.addEventListener("hashchange",route);
+  S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); route(); scheduleRefresh();
+  // Demo link: a shop order placed in another tab of this browser shows up here at once.
+  window.addEventListener("storage", e=>{ if(MODE!=="demo" || e.key!==WMSCore.SHOP_KEY) return; WMSCore.mergeShopOrders(S); reindex(); render(); });
+  setInterval(()=>{ if(location.hash==="#orders"){ NOW=Date.now(); renderOrders(); } }, 30000);
+}
+async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; reindex(); }
+async function connectSupabase(){
+  const url=$("#sbUrl").value.trim(), key=$("#sbKey").value.trim();
+  if(!url||!key){ msg("#sbMsg","err","Enter the Project URL and anon key."); return; }
+  if(!window.supabase){ msg("#sbMsg","err","The Supabase library did not load. Check the network, then reload."); return; }
+  ls.set("shelfledger.sbUrl",url); ls.set("shelfledger.sbKey",key);
+  msg("#sbMsg","info","Connecting…");
+  try{
+    sb=window.supabase.createClient(url,key);
+    const email=$("#sbEmail").value.trim(), pass=$("#sbPass").value;
+    if(email){ const {error}=await sb.auth.signInWithPassword({email,password:pass}); if(error) throw new Error("Sign-in failed: "+error.message); }
+    await loadAll(); MODE="supabase"; $("#sbSeed").disabled=false;
+    msg("#sbMsg","ok",`Connected. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database is empty: use Copy demo data, or load your own SKUs and shelves."}`);
+    render("setup");
+  }catch(e){ sb=null; MODE="demo"; msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" (This happens inside the Claude viewer, which blocks outside servers. Host the file yourself.)":"")); }
+}
+async function seedSupabase(){
+  if(MODE!=="supabase") return;
+  const D=WMSCore.buildDemo(Date.now(), cfg); msg("#sbMsg","info","Copying demo data…");
+  try{
+    for(const t of ["skus","locations","purchase_orders","po_lines","sales_orders","order_lines","customer_returns","scan_events"]){
+      const rows = t==="scan_events" ? D[t].map(({id,...r})=>r) : D[t];
+      for(let i=0;i<rows.length;i+=500){ const {error}=await sb.from(t).upsert(rows.slice(i,i+500)); if(error) throw new Error(t+": "+error.message); }
+    }
+    await connectSupabase();
+  }catch(e){ msg("#sbMsg","err",esc(e.message)); }
+}
+boot();
+</script>
+</body>
+</html>
