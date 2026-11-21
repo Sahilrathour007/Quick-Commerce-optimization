@@ -175,12 +175,12 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <a href="#reorder">Movers &amp; reorder</a>
     <a href="#relocate">Relocation</a>
     <a href="#failures">Scan failures</a>
-    <a href="#setup">Setup</a>
+    <a href="#setup">Sign in</a>
   </nav>
 </div></header>
 
 <main class="wrap">
-<div id="offlineBar" class="msg warn" hidden style="margin-bottom:18px"><span class="ic">!</span><span>Not connected, so nothing is shown. <a href="#setup">Go to Setup</a> and sign in to load your store's data.</span></div>
+<div id="offlineBar" class="msg warn" hidden style="margin-bottom:18px"><span class="ic">!</span><span>Not connected, so nothing is shown. <a href="#setup">Sign in</a> to load your store's data.</span></div>
 
 <!-- ================= ORDERS ================= -->
 <section class="view" id="v-orders" hidden>
@@ -307,36 +307,15 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 
 <!-- ================= SETUP ================= -->
 <section class="view" id="v-setup" hidden>
-  <div class="head"><div><h2>Setup</h2><p>Connect your Supabase project, then label each station's scanner.</p></div></div>
-  <div class="grid2">
-    <div class="panel"><h3>Supabase</h3>
-      <ol class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
-        <li>Create a project at supabase.com.</li>
-        <li>SQL Editor → paste <span class="code">supabase/schema.sql</span> → Run. Then the same for <span class="code">supabase/seed.sql</span> (products, shelves, opening stock).</li>
-        <li>Authentication → Users → Add user → Create new user (tick Auto Confirm). Use that email and password below.</li>
-        <li>Project Settings → API → copy the Project URL and the anon public key below.</li>
-      </ol>
-      <label class="f">Project URL<input type="text" id="sbUrl" placeholder="https://xxxx.supabase.co"></label>
-      <label class="f">Anon public key<input type="password" id="sbKey" placeholder="eyJhbGciOi…"></label>
-      <label class="f">Station login email<input type="email" id="sbEmail"></label>
-      <label class="f">Password<input type="password" id="sbPass"></label>
-      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button class="ghost" id="sbOut">Sign out</button></div>
-      <div id="sbMsg"></div>
-      <p class="small muted">Inside the Claude artifact viewer, calls to outside servers are blocked, so this page can only run on demo data here. Host <span class="code">index.html</span> yourself (Vercel, Netlify, or open it from disk) to connect.</p>
-    </div>
-    <div class="panel"><h3>How scans reach the map</h3>
-      <p class="small">This site only reads. Your scanners (a handheld app, scanner PCs, or your WMS) write one row into <span class="code">scan_events</span> per movement. The map, reorder list and failure checks are all built from those rows.</p>
-      <div class="formula">station          IN | OUT
-event_type       PUTAWAY | RETURN_PUTAWAY | MOVE_IN | PICK | MOVE_OUT | DAMAGE
-sku_id           SKU1001
-location_code    A-01-2-B-03      (scanned from the shelf label)
-qty              12
-ref_type/ref_id  PO / PO-261121 · ORDER / ORD-50231 · RETURN / RET-0042
-scanner_id       IN-01 | OUT-01
-operator         Ravi</div>
-      <label class="f">Refresh the map every<select id="cfgRefresh"><option value="0">Off</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option></select></label>
-      <p class="small muted">Shelf labels: print each location code (e.g. <span class="loc">A-01-2-B-03</span>) as a Code-128 barcode, so a scan tells a shelf from a product.</p>
-    </div>
+  <div class="panel" style="max-width:440px;width:100%">
+    <h3>Sign in</h3>
+    <p class="small muted" id="whoami">Sign in with your staff account to load the store's data.</p>
+    <form id="loginForm" class="view" style="gap:12px">
+      <label class="f">Email<input type="email" id="sbEmail" autocomplete="username" required></label>
+      <label class="f">Password<input type="password" id="sbPass" autocomplete="current-password" required></label>
+      <div class="row"><button class="primary" id="sbConnect" type="submit">Sign in</button><button class="ghost" id="sbOut" type="button">Sign out</button></div>
+    </form>
+    <div id="sbMsg"></div>
   </div>
 </section>
 </main>
@@ -366,7 +345,7 @@ const ms = v => typeof v === "number" ? v : Date.parse(v);
 // Your Supabase project. The anon key is public by design; staff still sign in with email + password in Setup.
 const SUPABASE_URL = "https://ugoobcnusxmvdghghhtt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnb29iY251c3htdmRnaGdoaHR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0Mzk4MTksImV4cCI6MjEwODAxNTgxOX0.qkZFtNaagypy3aDo2ZvhvqiXx-GyrerwS-WBm4ZfHeA";
-let MODE = "offline", sb = null;   // "offline" = not signed in: no data shown, ever. No demo data.
+let MODE = "offline", sb = null, WHO = "";   // "offline" = not signed in: no data shown, ever. No demo data.
 const EMPTY = () => ({skus:[],locations:[],purchase_orders:[],po_lines:[],sales_orders:[],order_lines:[],customer_returns:[],scan_events:[],cycle_counts:[]});
 let S = {};               // tables
 let I = {};               // indexes
@@ -920,6 +899,7 @@ function render(v){
   const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
   $("#modePill").className="pill "+(MODE==="supabase"?"live":"bad"); $("#modePill").textContent = MODE==="supabase" ? "Supabase · live" : "Not connected";
   $("#offlineBar").hidden = MODE==="supabase" || v==="setup";
+  $("#whoami").textContent = MODE==="supabase" ? `Signed in as ${WHO||"staff"}.` : "Sign in with your staff account to load the store's data.";
   if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures();
 }
 function focusSlot(code){
@@ -928,7 +908,7 @@ function focusSlot(code){
 }
 let refreshTimer=null;
 function scheduleRefresh(){
-  clearInterval(refreshTimer); const sec=+($("#cfgRefresh").value||0); ls.set("shelfledger.refresh",sec);
+  clearInterval(refreshTimer); const sec=60;   // reload every minute when signed in
   if(sec>0) refreshTimer=setInterval(async()=>{ if(MODE!=="supabase") return; try{ await loadAll(); render(); }catch(e){} }, sec*1000);
 }
 function boot(){
@@ -949,10 +929,8 @@ function boot(){
   ["#roWin","#roLead","#roSvc"].forEach(id=>$(id).addEventListener("change",roSave));
   document.addEventListener("change",e=>{ const lt=e.target.closest("input.lt"); if(lt) setLeadTime(lt.dataset.sku, lt.value.trim()); });
   $("#fPer").onchange=renderFailures;
-  $("#sbUrl").value=ls.get("shelfledger.sbUrl","")||SUPABASE_URL; $("#sbKey").value=ls.get("shelfledger.sbKey","")||SUPABASE_ANON_KEY;
-  $("#cfgRefresh").value=String(ls.get("shelfledger.refresh",60)); $("#cfgRefresh").onchange=scheduleRefresh;
-  $("#sbConnect").onclick=connectSupabase;
-  $("#sbOut").onclick=async()=>{ try{ await sb?.auth.signOut(); }catch(e){} MODE="offline"; S=EMPTY(); reindex(); msg("#sbMsg","info","Signed out. Nothing is shown until someone signs in."); render("setup"); };
+  $("#loginForm").addEventListener("submit",e=>{ e.preventDefault(); connectSupabase(); });
+  $("#sbOut").onclick=async()=>{ try{ await sb?.auth.signOut(); }catch(e){} MODE="offline"; WHO=""; S=EMPTY(); reindex(); msg("#sbMsg","info","Signed out. Nothing is shown until someone signs in."); render("setup"); };
   window.addEventListener("hashchange",route);
   S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
@@ -961,26 +939,25 @@ function boot(){
 async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; reindex(); }
 // On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
 async function autoConnect(){
-  const url=ls.get("shelfledger.sbUrl","")||SUPABASE_URL, key=ls.get("shelfledger.sbKey","")||SUPABASE_ANON_KEY;
+  const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
   if(!url||!key||!window.supabase) return;
-  try{ sb=window.supabase.createClient(url,key); const {data}=await sb.auth.getSession(); if(!data?.session) return;
+  try{ sb=window.supabase.createClient(url,key); const {data}=await sb.auth.getSession(); if(!data?.session) return; WHO=data.session.user?.email||"";
     await loadAll(); MODE="supabase"; render(); }catch(e){ MODE="offline"; }
 }
 async function connectSupabase(){
-  const url=$("#sbUrl").value.trim(), key=$("#sbKey").value.trim();
-  if(!url||!key){ msg("#sbMsg","err","Enter the Project URL and anon key."); return; }
+  const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
   if(!window.supabase){ msg("#sbMsg","err","The Supabase library did not load. Check the network, then reload."); return; }
   ls.set("shelfledger.sbUrl",url); ls.set("shelfledger.sbKey",key);
   msg("#sbMsg","info","Connecting…");
   try{
     sb=window.supabase.createClient(url,key);
     const email=$("#sbEmail").value.trim(), pass=$("#sbPass").value;
-    if(!email||!pass) throw new Error("Enter the email and password of the user you created in Authentication → Users. Without signing in, the database hides every row.");
+    if(!email||!pass) throw new Error("Enter your email and password.");
     const {error}=await sb.auth.signInWithPassword({email,password:pass}); if(error) throw new Error("Sign-in failed: "+error.message);
-    await loadAll(); MODE="supabase";
-    msg("#sbMsg","ok",`Connected. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database has no products yet: run supabase/seed.sql in the SQL Editor, then connect again."}`);
+    await loadAll(); MODE="supabase"; WHO=email; $("#sbPass").value="";
+    msg("#sbMsg","ok",`Signed in as ${esc(email)}. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database has no products yet."}`);
     render("setup");
-  }catch(e){ sb=null; MODE="offline"; S=EMPTY(); reindex(); render("setup"); msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" (This happens inside the Claude viewer, which blocks outside servers. Host the file yourself.)":"")); }
+  }catch(e){ sb=null; MODE="offline"; S=EMPTY(); reindex(); render("setup"); msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" Could not reach the database. Check your internet connection.":"")); }
 }
 boot();
 </script>
