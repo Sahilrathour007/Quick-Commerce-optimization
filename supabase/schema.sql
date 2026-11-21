@@ -213,6 +213,8 @@ end $$;
 
 -- Ledger rows are append-only: no one edits or deletes a scan. Corrections are new COUNT_ADJ rows.
 drop policy if exists "auth_all" on scan_events;
+drop policy if exists "scan_read" on scan_events;
+drop policy if exists "scan_insert" on scan_events;
 create policy "scan_read"   on scan_events for select to authenticated using (true);
 create policy "scan_insert" on scan_events for insert to authenticated with check (true);
 
