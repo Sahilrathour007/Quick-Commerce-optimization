@@ -754,8 +754,11 @@ function renderOrders(){
   const open=S.sales_orders.filter(o=>["placed","picking","packed"].includes(o.status)).sort((a,b)=>ms(a.placed_at)-ms(b.placed_at));
   const n=st=>open.filter(o=>o.status===st).length, oldest=open.length?(NOW-ms(open[0].placed_at))/60000:0;
   const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
-  $("#ordKpis").innerHTML = k("New", n("placed"), "waiting to be packed", n("placed")?"sev-warn":"")
-    + k("Packing", n("picking")+n("packed"), "being packed now")
+  const items=list=>list.reduce((t,o)=>t+(I.linesByOrder.get(o.order_id)||[]).reduce((a,l)=>a+l.qty,0),0);
+  const toPack=open.length, midnight=new Date(NOW); midnight.setHours(0,0,0,0);
+  const sentToday=S.sales_orders.filter(o=>o.status==="dispatched" && o.dispatched_at && ms(o.dispatched_at)>=midnight.getTime()).length;
+  $("#ordKpis").innerHTML = k("To pack", `${toPack} order${toPack===1?"":"s"}`, `${items(open)} items · ${n("placed")} not started, ${n("picking")+n("packed")} being packed`, toPack?"sev-warn":"sev-good")
+    + k("Sent today", sentToday, "handed to riders since midnight")
     + k("Oldest open", open.length?`${Math.round(oldest)} min`:"—", "since the customer ordered", oldest>15?"sev-bad":oldest>10?"sev-warn":"sev-good");
   const avail=WMSCore.availability(S);
   $("#ordList").innerHTML = open.map(o=>{
