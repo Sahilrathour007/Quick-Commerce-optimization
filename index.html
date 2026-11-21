@@ -166,7 +166,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
   <div class="brand">
     <h1>Shelf Ledger</h1>
     <span class="sub">Dark store · where every SKU sits</span>
-    <span id="modePill" class="pill demo">Demo data</span>
+    <span id="modePill" class="pill bad">Not connected</span>
   </div>
   <nav class="tabs" id="tabs">
     <a href="#orders">Orders <span class="pill warn" id="ordBadge" hidden></span></a>
@@ -180,6 +180,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 </div></header>
 
 <main class="wrap">
+<div id="offlineBar" class="msg warn" hidden style="margin-bottom:18px"><span class="ic">!</span><span>Not connected, so nothing is shown. <a href="#setup">Go to Setup</a> and sign in to load your store's data.</span></div>
 
 <!-- ================= ORDERS ================= -->
 <section class="view" id="v-orders" hidden>
@@ -319,7 +320,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
       <label class="f">Anon public key<input type="password" id="sbKey" placeholder="eyJhbGciOi…"></label>
       <label class="f">Station login email<input type="email" id="sbEmail"></label>
       <label class="f">Password<input type="password" id="sbPass"></label>
-      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button class="ghost" id="sbDemo">Back to demo data</button></div>
+      <div class="row"><button class="primary" id="sbConnect">Connect and load</button><button class="ghost" id="sbOut">Sign out</button></div>
       <div id="sbMsg"></div>
       <p class="small muted">Inside the Claude artifact viewer, calls to outside servers are blocked, so this page can only run on demo data here. Host <span class="code">index.html</span> yourself (Vercel, Netlify, or open it from disk) to connect.</p>
     </div>
@@ -365,7 +366,8 @@ const ms = v => typeof v === "number" ? v : Date.parse(v);
 // Your Supabase project. The anon key is public by design; staff still sign in with email + password in Setup.
 const SUPABASE_URL = "https://ugoobcnusxmvdghghhtt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnb29iY251c3htdmRnaGdoaHR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0Mzk4MTksImV4cCI6MjEwODAxNTgxOX0.qkZFtNaagypy3aDo2ZvhvqiXx-GyrerwS-WBm4ZfHeA";
-let MODE = "demo", sb = null;
+let MODE = "offline", sb = null;   // "offline" = not signed in: no data shown, ever. No demo data.
+const EMPTY = () => ({skus:[],locations:[],purchase_orders:[],po_lines:[],sales_orders:[],order_lines:[],customer_returns:[],scan_events:[],cycle_counts:[]});
 let S = {};               // tables
 let I = {};               // indexes
 let NOW = Date.now();
@@ -625,7 +627,8 @@ function analyse(){
     return {sku:s, units, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
   }).sort((a,b)=>b.units-a.units);
   const tot=rows.reduce((a,r)=>a+r.units,0)||1; let cum=0;
-  for(const r of rows){ r.share=r.units/tot; r.cls = cum<0.8 ? "A" : cum<0.95 ? "B" : "C"; cum+=r.share; r.cum=cum; }
+  const anySales=rows.some(r=>r.units>0);
+  for(const r of rows){ r.share=r.units/tot; r.cls = !anySales ? "—" : r.units===0 ? "C" : cum<0.8 ? "A" : cum<0.95 ? "B" : "C"; cum+=r.share; r.cum=cum; }   // no sales yet = no class
   for(const r of rows){
     const special = r.sku.temp_class!=="ambient" || r.sku.unit_weight_kg>=4;
     r.advice = special||!r.zone ? null : (r.cls==="A" && (r.zone==="B"||r.zone==="C")) ? "Move to zone A" : (r.cls==="C" && r.zone==="A") ? "Move out of zone A" : null;
@@ -644,7 +647,7 @@ function renderReorder(){
     + k("Out of stock", `${out.length} ${pl(out.length)}`, "nothing left to sell", out.length?"sev-bad":"sev-good");
   const shelf=r=>`${r.home?locChip(r.home):'<span class="pill bad">no shelf</span>'}${r.advice?` <span class="pill warn">${r.advice}</span>`:""}`;
   $("#roBestN").textContent=best.length; $("#roWorstN").textContent=worst.length;
-  $("#roBest").innerHTML=best.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">${fmtPct(r.share)}</td><td class="n">${fmtPct(r.cum)}</td><td>${shelf(r)}</td></tr>`).join("");
+  $("#roBest").innerHTML=best.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">${fmtPct(r.share)}</td><td class="n">${fmtPct(r.cum)}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No sales yet. Best movers appear once orders come in.</td></tr>`;
   $("#roWorst").innerHTML=worst.map(r=>`<tr><td>${esc(r.sku.name)}</td><td class="n">${r.units}</td><td class="n">${r.onHand}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(0):"no sales"}</td><td>${shelf(r)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No SKUs in the tail.</td></tr>`;
   const rank={out:0,order:1,ok:2};
   const all=rows.slice().sort((a,b)=>rank[a.status]-rank[b.status] || a.daysLeft-b.daysLeft);
@@ -676,7 +679,7 @@ function planRelocation(){
   const an=analyse(), by=new Map(an.rows.map(r=>[r.sku.sku_id,r])), occ=slotLoad();
   const get=c=>occ.get(c)||(occ.set(c,{vol:0,kg:0,items:[]}),occ.get(c));
   const over=[...occ.entries()].map(([c,o])=>{ const L=I.loc.get(c); return {code:c, L, o, snap:o.items.map(i=>({...i})), pv:o.vol/L.capacity_cm3, pk:o.kg/L.max_weight_kg}; }).filter(x=>x.pv>1||x.pk>1).sort((a,b)=>Math.max(b.pv,b.pk)-Math.max(a.pv,a.pk));
-  const target=r=>{ const s=r.sku; if(s.temp_class!=="ambient") return null; if(s.unit_weight_kg>=4) return "H"; return r.cls; };
+  const target=r=>{ const s=r.sku; if(!["A","B","C"].includes(r.cls)) return null; if(s.temp_class!=="ambient") return null; if(s.unit_weight_kg>=4) return "H"; return r.cls; };
   const cands=[];
   for(const r of an.rows){
     const t=target(r), slot=r.home; if(!t||!slot) continue; const z=I.loc.get(slot).zone;
@@ -915,7 +918,8 @@ function route(){
 function render(v){
   v = v || (VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map");
   const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
-  $("#modePill").className="pill "+(MODE==="demo"?"demo":"live"); $("#modePill").textContent = MODE==="demo" ? "Demo data" : "Supabase · live";
+  $("#modePill").className="pill "+(MODE==="supabase"?"live":"bad"); $("#modePill").textContent = MODE==="supabase" ? "Supabase · live" : "Not connected";
+  $("#offlineBar").hidden = MODE==="supabase" || v==="setup";
   if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures();
 }
 function focusSlot(code){
@@ -948,15 +952,20 @@ function boot(){
   $("#sbUrl").value=ls.get("shelfledger.sbUrl","")||SUPABASE_URL; $("#sbKey").value=ls.get("shelfledger.sbKey","")||SUPABASE_ANON_KEY;
   $("#cfgRefresh").value=String(ls.get("shelfledger.refresh",60)); $("#cfgRefresh").onchange=scheduleRefresh;
   $("#sbConnect").onclick=connectSupabase;
-  $("#sbDemo").onclick=()=>{ MODE="demo"; sb=null; S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); msg("#sbMsg","info","Back on demo data."); render("setup"); };
+  $("#sbOut").onclick=async()=>{ try{ await sb?.auth.signOut(); }catch(e){} MODE="offline"; S=EMPTY(); reindex(); msg("#sbMsg","info","Signed out. Nothing is shown until someone signs in."); render("setup"); };
   window.addEventListener("hashchange",route);
-  S=WMSCore.mergeShopOrders(WMSCore.buildDemo(Date.now(), cfg)); reindex(); route(); scheduleRefresh();
-  // Demo link: a shop order placed in another tab of this browser shows up here at once.
-  window.addEventListener("storage", e=>{ if(MODE!=="demo" || e.key!==WMSCore.SHOP_KEY) return; WMSCore.mergeShopOrders(S); reindex(); render(); });
+  S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
   setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await loadAll(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
 }
 async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; reindex(); }
+// On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
+async function autoConnect(){
+  const url=ls.get("shelfledger.sbUrl","")||SUPABASE_URL, key=ls.get("shelfledger.sbKey","")||SUPABASE_ANON_KEY;
+  if(!url||!key||!window.supabase) return;
+  try{ sb=window.supabase.createClient(url,key); const {data}=await sb.auth.getSession(); if(!data?.session) return;
+    await loadAll(); MODE="supabase"; render(); }catch(e){ MODE="offline"; }
+}
 async function connectSupabase(){
   const url=$("#sbUrl").value.trim(), key=$("#sbKey").value.trim();
   if(!url||!key){ msg("#sbMsg","err","Enter the Project URL and anon key."); return; }
@@ -971,7 +980,7 @@ async function connectSupabase(){
     await loadAll(); MODE="supabase";
     msg("#sbMsg","ok",`Connected. Loaded ${S.skus.length} SKUs, ${S.locations.length} shelves, ${fmtN(S.scan_events.length)} scans.${S.skus.length?"":" The database has no products yet: run supabase/seed.sql in the SQL Editor, then connect again."}`);
     render("setup");
-  }catch(e){ sb=null; MODE="demo"; msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" (This happens inside the Claude viewer, which blocks outside servers. Host the file yourself.)":"")); }
+  }catch(e){ sb=null; MODE="offline"; S=EMPTY(); reindex(); render("setup"); msg("#sbMsg","err",esc(e.message)+(/fetch/i.test(e.message)?" (This happens inside the Claude viewer, which blocks outside servers. Host the file yourself.)":"")); }
 }
 boot();
 </script>
