@@ -80,11 +80,35 @@
     const a = Math.sin(dLa / 2) ** 2 + Math.cos(t(la1)) * Math.cos(t(la2)) * Math.sin(dLo / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(a));
   }
-  // Returns {km, src}. src: entered (order.distance_km) | derived (coordinates) | assumed (default)
+  // ---- Plus Codes (Open Location Code), e.g. "9JG5+6VQ". Decode full codes; recover short codes near a reference point.
+  const OLC = "23456789CFGHJMPQRVWX", PAIR_RES = [20, 1, 0.05, 0.0025, 0.000125];
+  function olcDecodeFull(code) {
+    const c = String(code).replace("+", "").toUpperCase(); if (c.length < 8) return null;
+    let lat = -90, lng = -180, last = 20;
+    for (let p = 0; p < 5 && 2 * p + 1 < c.length; p++) { const a = OLC.indexOf(c[2 * p]), b = OLC.indexOf(c[2 * p + 1]); if (a < 0 || b < 0) return null; lat += a * PAIR_RES[p]; lng += b * PAIR_RES[p]; last = PAIR_RES[p]; }
+    return { lat: lat + last / 2, lng: lng + last / 2 };
+  }
+  function plusCodeToLatLng(text, refLat, refLng) {
+    const m = /(?:^|[\s,])([23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3})(?=$|[\s,])/i.exec(String(text || "")); if (!m) return null;
+    const code = m[1].toUpperCase(), before = code.split("+")[0].length;
+    if (before === 8) return olcDecodeFull(code);
+    if (before !== 4) return null;                                   // only the common 4-character short form is recovered
+    const c = code.replace("+", ""), idx = i => OLC.indexOf(c[i]);
+    if ([0, 1, 2, 3, 4, 5].some(i => idx(i) < 0)) return null;
+    let latOff = idx(0) * 0.05 + idx(2) * 0.0025 + idx(4) * 0.000125 + 0.000125 / 2;
+    let lngOff = idx(1) * 0.05 + idx(3) * 0.0025 + idx(5) * 0.000125 + 0.000125 / 2;
+    let lat = Math.floor(refLat) + latOff, lng = Math.floor(refLng) + lngOff;
+    if (lat - refLat > 0.5) lat -= 1; else if (lat - refLat < -0.5) lat += 1;
+    if (lng - refLng > 0.5) lng -= 1; else if (lng - refLng < -0.5) lng += 1;
+    return { lat, lng };
+  }
+  // Returns {km, src}. src: entered (order.distance_km) | derived (coordinates or Plus Code) | assumed (default)
   function distanceOf(order, R) {
     if (order && order.distance_km != null && order.distance_km !== "" && +order.distance_km >= 0) return { km: +order.distance_km, src: "entered" };
     if (order && order.dest_lat != null && order.dest_lng != null && isFinite(+order.dest_lat) && isFinite(+order.dest_lng))
       return { km: haversineKm(R.wh_lat, R.wh_lng, +order.dest_lat, +order.dest_lng) * R.road_factor, src: "derived" };
+    const pc = order && order.address ? plusCodeToLatLng(order.address, R.wh_lat, R.wh_lng) : null;
+    if (pc) { const km = haversineKm(R.wh_lat, R.wh_lng, pc.lat, pc.lng) * R.road_factor; if (km <= 40) return { km, src: "derived" }; }   // >40 km = warehouse coordinates are probably wrong
     return { km: R.avg_distance_km, src: "assumed" };
   }
   function riderPay(km, R) { return R.rider_base + Math.max(0, km - R.rider_free_km) * R.rider_per_km; }
@@ -118,13 +142,14 @@
   // ---------- Per-order contribution -----------------------------------------
   // ctx: {R, bags, sku: Map(sku_id -> skuCost), vol: fn(skuRow)->cm3, skuRow: Map, customLines: [..]}
   function orderEconomics(order, lines, ctx) {
-    const R = ctx.R; let gross = 0, items = 0, itemsIncl = 0, rev = 0, cogs = 0, vol = 0, promo = 0;
+    const R = ctx.R; let gross = 0, items = 0, itemsIncl = 0, rev = 0, cogs = 0, vol = 0, promo = 0, cogsAssumed = 0;
     for (const l of lines) {
       const c = ctx.sku.get(l.sku_id); if (!c) continue;
-      gross += c.mrp * l.qty; itemsIncl += c.price * l.qty; items += l.qty;
-      rev += (c.price / (1 + c.gst / 100)) * l.qty;      // revenue net of GST
-      promo += Math.max(0, c.mrp - c.price) * l.qty;      // discount given vs MRP (incl. GST)
-      cogs += c.cost * l.qty;
+      const price = l.unit_price_inr != null ? +l.unit_price_inr : c.price;      // price the customer actually paid, when the order line recorded it
+      gross += c.mrp * l.qty; itemsIncl += price * l.qty; items += l.qty;
+      rev += (price / (1 + c.gst / 100)) * l.qty;      // revenue net of GST
+      promo += Math.max(0, c.mrp - price) * l.qty;      // discount given vs MRP (incl. GST)
+      cogs += c.cost * l.qty; if (c.costSrc === "assumed") cogsAssumed += c.cost * l.qty;
       const row = ctx.skuRow && ctx.skuRow.get(l.sku_id); vol += (row ? ctx.vol(row) : 150) * l.qty;
     }
     // delivery fee: use what the order recorded if it did, else apply the rule
@@ -141,7 +166,7 @@
     }
     const revenue = rev + feeNet, variable = cogs + rider + bag.cost + payment + other;
     return { order_id: order && order.order_id, items, lines: lines.length, basket: itemsIncl, feeIncl, orderValue, gross, promo,
-      rev, feeNet, revenue, cogs, rider, bagCost: bag.cost, bagN: bag.n, bagId: bag.bag.id, payment, other,
+      rev, feeNet, revenue, cogs, cogsAssumed, rider, bagCost: bag.cost, bagN: bag.n, bagId: bag.bag.id, payment, other,
       contribution: revenue - variable, km: dist.km, kmSrc: dist.src, vol };
   }
 
@@ -154,8 +179,8 @@
     const n = rows.length;
     const gross = S(r => r.gross), promo = S(r => r.promo), rev = S(r => r.rev), fee = S(r => r.feeNet);
     const cogs = S(r => r.cogs), rider = S(r => r.rider), bags = S(r => r.bagCost), pay = S(r => r.payment), oth = S(r => r.other);
-    const writeOff = inp.writeOffCost || 0, shrink = inp.shrinkCost || 0;
-    const revenue = rev + fee, gp = revenue - cogs;
+    const writeOff = inp.writeOffCost || 0, shrink = inp.shrinkCost || 0, refunds = inp.refunds || 0, cogsBack = inp.cogsReturned || 0;
+    const revenue = rev + fee - refunds, cogsNet = cogs - cogsBack, gp = revenue - cogsNet;
     const contribution = gp - rider - bags - pay - oth - writeOff - shrink;
     // fixed (per month -> period)
     const fixedLines = [
@@ -166,7 +191,6 @@
       { id: "security", label: "Security + housekeeping", amt: R.security * months, src: R.src.security },
       { id: "internet", label: "Internet + devices", amt: R.internet * months, src: R.src.internet },
     ];
-    let customVar = 0;
     for (const c of (inp.customLines || [])) {
       const a = +c.amount || 0; if (c.basis === "order" || c.basis === "pct_sales") continue;
       const amt = c.basis === "day" ? a * days : c.basis === "trip" ? a * n : a * months;   // month default
@@ -176,12 +200,11 @@
     const carrying = (inp.invValueCost || 0) * (R.cost_of_funds_pct + R.insurance_pct) / 100 * days / 365;
     const storeProfit = contribution - fixed - carrying;
     // How much of the cost stack is measured vs guessed
-    const meas = cogs + (rows.filter(r => r.kmSrc !== "assumed").reduce((t, r) => t + r.rider, 0)) + writeOff + shrink;
-    const totalCost = cogs + rider + bags + pay + oth + writeOff + shrink + fixed + carrying;
+    const totalCost = cogsNet + rider + bags + pay + oth + writeOff + shrink + fixed + carrying;
     const guessed = fixedLines.filter(f => f.src === "assumed").reduce((t, f) => t + f.amt, 0)
       + rows.filter(r => r.kmSrc === "assumed").reduce((t, r) => t + r.rider, 0) + bags + pay + carrying
-      + (inp.assumedCogs || 0);
-    return { n, days, rows, gross, promo, rev, fee, revenue, cogs, gp, rider, bags, pay, other: oth, writeOff, shrink,
+      + S(r => r.cogsAssumed);          // cost of goods counts as a guess until unit costs come from invoices
+    return { n, days, rows, gross, promo, rev, fee, revenue, refunds, cogsReturned: cogsBack, cogsGross: cogs, cogs: cogsNet, gp, rider, bags, pay, other: oth, writeOff, shrink,
       contribution, fixedLines, fixed, carrying, storeProfit, totalCost, guessed, measuredShare: totalCost > 0 ? 1 - guessed / totalCost : null,
       perOrder: n ? { revenue: revenue / n, contribution: contribution / n, storeProfit: storeProfit / n } : null,
       breakevenOrdersPerDay: (rows.length && contribution > 0) ? ((fixed + carrying) / (contribution / n)) / days : null };
@@ -194,7 +217,7 @@
     return { atRiskUnits: atRisk, atRiskValue: atRisk * unitCost, daysCover: avgDaily > 0 ? onHand / avgDaily : Infinity };
   }
 
-  root.QCCost = { DEFAULT_RATES, DEFAULT_BAGS, CAT_MARGIN, CAT_SHELF, GST_DEFAULT, rates, haversineKm, distanceOf, riderPay, bagsFor,
+  root.QCCost = { plusCodeToLatLng, DEFAULT_RATES, DEFAULT_BAGS, CAT_MARGIN, CAT_SHELF, GST_DEFAULT, rates, haversineKm, distanceOf, riderPay, bagsFor,
     skuCost, orderEconomics, periodPnL, expiryRisk };
   if (typeof module !== "undefined" && module.exports) module.exports = root.QCCost;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -58,3 +58,20 @@ New files: `costs.js` (cost model), `pnl.js` (P&L, Costs tab, damaged/expired an
 - **Lead time:** measured from purchase orders (ordered_at to received_at) when a SKU has any; a typed lead time still wins.
 - **Expiry:** `po_lines.expiry_date` (in costs.sql). Order cards show which batch to take first. Order quantity is capped at what can sell before expiry.
 - **Not done:** dashboards still download full tables (scale limit), and stock-out censored demand is not corrected.
+
+## Scan station and bug-fix round
+
+**Scan station (Orders → Scan items).** Two steps per unit: scan the shelf label, then the product barcode.
+A shelf the ledger says doesn't hold the product, a wrong product or an unknown code is refused with a pop-up and a
+low beep, and nothing is written. A correct scan writes one PICK row and moves to the next unit automatically.
+"Hand to rider" stays locked until every line is scanned. Enter real EANs on the Costs tab (the seed barcodes are fake).
+
+**Rules now applied everywhere (app, map, SQL views, shop):**
+- Book stock = received + sellable returns − dispatched − write-offs − count shortages. Count surpluses only fix the shelf.
+- Shrinkage in the P&L counts shortages only. Returns appear as refunds, with restocked units credited back to COGS.
+- Order lines save the price paid (`order_lines.unit_price_inr`), so a price change never rewrites history.
+- The "measured share" banner counts COGS as a guess until unit costs come from invoices.
+- `place_order` merges duplicate lines, caps 10 per line / 40 per order, 3 open orders per phone, 60 shop orders per 10 min.
+- When signed in, the database is the source of truth for costs; browser-only edits can be uploaded or discarded.
+
+**Re-run `supabase/costs.sql`** after pulling (safe to repeat), then `lock-down.sql`, and switch off email sign-ups in Supabase.

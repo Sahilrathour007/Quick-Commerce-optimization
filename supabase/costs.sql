@@ -88,9 +88,10 @@ from (
 on conflict (sku_id) do nothing;
 
 -- Egg tray and bread are shorter-lived than their category; milk is 2-3 days. Tune on the pack label.
-update sku_costs set shelf_life_days = 21 where sku_id = 'SKU1005';
-update sku_costs set shelf_life_days = 3  where sku_id = 'SKU1001';
-update sku_costs set shelf_life_days = 30 where sku_id = 'SKU1003';
+-- Only while the value is still the seeded category default, so re-running this file never overwrites your edits.
+update sku_costs set shelf_life_days = 21 where sku_id = 'SKU1005' and shelf_life_days = 5;
+update sku_costs set shelf_life_days = 3  where sku_id = 'SKU1001' and shelf_life_days = 5;
+update sku_costs set shelf_life_days = 30 where sku_id = 'SKU1003' and shelf_life_days = 5;
 
 insert into cost_rates (key, value) values
   ('staff_count', 3), ('staff_salary', 15000)
@@ -115,3 +116,90 @@ begin
 end $$;
 
 -- Order distance can be edited by signed-in staff (the existing anon grant on sales_orders is unchanged).
+
+
+-- =====================================================================
+-- FIXES (safe to re-run)
+-- =====================================================================
+
+-- 1. Price the customer actually paid, saved on every order line (so changing a price never rewrites history).
+alter table order_lines add column if not exists unit_price_inr numeric(10,2);
+create or replace function order_line_price() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.unit_price_inr is null then select price_inr into new.unit_price_inr from skus where sku_id = new.sku_id; end if;
+  return new;
+end $$;
+drop trigger if exists order_line_price_trg on order_lines;
+create trigger order_line_price_trg before insert on order_lines for each row execute function order_line_price();
+-- Old lines get today's price: the best that exists. New lines are exact.
+update order_lines ol set unit_price_inr = s.price_inr from skus s where s.sku_id = ol.sku_id and ol.unit_price_inr is null;
+
+-- 2. Shop stock must not include units written off as damaged/expired or found short in a count.
+create or replace view shop_catalog as
+with q as (
+  select sku_id, sum(qty) as q from (
+    select sku_id, qty_received as qty from po_lines where qty_received is not null
+    union all select sku_id, qty from customer_returns where condition = 'sellable'
+    union all select ol.sku_id, -ol.qty from order_lines ol join sales_orders so using (order_id) where so.status <> 'cancelled'
+    union all select sku_id, -qty from write_offs
+    union all select sku_id, least(0, counted_qty - system_qty) from cycle_counts
+  ) x group by sku_id
+)
+select s.sku_id, s.name, s.category, s.temp_class, s.pack, s.art, s.image_url,
+       s.price_inr, s.mrp_inr, greatest(0, coalesce(q.q, 0))::int as available
+from skus s left join q using (sku_id)
+where s.price_inr is not null;
+
+-- 3. Book stock in the reconciliation view follows the same rules as the app.
+create or replace view sku_reconciliation as
+with book as (
+  select sku_id, sum(qty) as q from (
+    select sku_id, qty_received as qty from po_lines where qty_received is not null
+    union all select sku_id, qty from customer_returns where condition = 'sellable'
+    union all select ol.sku_id, -ol.qty from order_lines ol join sales_orders so using (order_id) where so.status = 'dispatched'
+    union all select sku_id, -qty from write_offs
+    union all select sku_id, least(0, counted_qty - system_qty) from cycle_counts
+  ) x group by sku_id
+), shelf as (
+  select sku_id, sum(qty) as q from location_stock group by sku_id
+)
+select s.sku_id, s.name,
+       coalesce(b.q,0)::int as book_qty,
+       coalesce(sh.q,0)::int as scanned_qty,
+       (coalesce(sh.q,0) - coalesce(b.q,0))::int as gap
+from skus s left join book b using (sku_id) left join shelf sh using (sku_id);
+
+-- 4. Checkout hardening: duplicate cart lines are merged, quantities are capped, and one phone number or a
+--    flood of orders cannot lock up the stock.
+create or replace function place_order(p_items jsonb, p_customer jsonb)
+returns text language plpgsql security definer set search_path = public as $$
+declare v_id text; r record; v_avail int; v_price numeric; v_total numeric := 0; v_units int := 0; v_phone text;
+begin
+  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then raise exception 'Your cart is empty'; end if;
+  if coalesce(trim(p_customer->>'name'),'') = '' or coalesce(trim(p_customer->>'address'),'') = ''
+     or coalesce(p_customer->>'phone','') !~ '^[6-9][0-9]{9}$' then
+    raise exception 'Name, a 10-digit mobile number and an address are required';
+  end if;
+  v_phone := p_customer->>'phone';
+  perform pg_advisory_xact_lock(4242);
+  if (select count(*) from sales_orders where source = 'shop' and customer_phone = v_phone and status in ('placed','picking')) >= 3 then
+    raise exception 'You already have 3 orders being prepared. Please wait for one to arrive.'; end if;
+  if (select count(*) from sales_orders where source = 'shop' and placed_at > now() - interval '10 minutes') >= 60 then
+    raise exception 'We are very busy right now. Please try again in a few minutes.'; end if;
+  for r in select x->>'sku_id' as sku_id, sum((x->>'qty')::int) as qty from jsonb_array_elements(p_items) x group by 1 loop
+    if r.qty < 1 or r.qty > 10 then raise exception 'You can buy 1 to 10 of each product'; end if;
+    select available, price_inr into v_avail, v_price from shop_catalog where sku_id = r.sku_id;
+    if v_avail is null then raise exception 'A product in your cart is no longer sold'; end if;
+    if r.qty > v_avail then raise exception 'Only % left of %', greatest(v_avail,0), (select name from skus where sku_id = r.sku_id); end if;
+    v_units := v_units + r.qty; v_total := v_total + v_price * r.qty;
+  end loop;
+  if v_units > 40 then raise exception 'An order can hold up to 40 items'; end if;
+  v_id := 'WEB-' || nextval('web_order_seq');
+  insert into sales_orders (order_id, status, source, customer_name, customer_phone, address, total_inr)
+  values (v_id, 'placed', 'shop', trim(p_customer->>'name'), v_phone, trim(p_customer->>'address'),
+          v_total + case when v_total >= 199 then 0 else 25 end);
+  insert into order_lines (order_id, sku_id, qty)
+  select v_id, x->>'sku_id', sum((x->>'qty')::int) from jsonb_array_elements(p_items) x group by 1, 2;
+  return v_id;
+end $$;
+grant execute on function place_order(jsonb, jsonb) to anon, authenticated;
