@@ -7,6 +7,7 @@ Warehouse management for a quick-commerce dark store: **Shelf Ledger**. One web 
 | `index.html` | The app. Tabs: **Orders** (live shop orders with the shelf to pick from), **Warehouse map**, **Inventory**, **Movers & reorder** (80/20 + dynamic reorder point with lead time), **Relocation** (zone moves checked against slot space and weight), **Scan failures**, **Setup**. Runs on demo data until you connect Supabase. |
 | `core.js` | Demo data, stock maths and the demo link to the shop. The same file is in QC-shop; keep the two copies identical. |
 | `supabase/open-access.sql` / `lock-down.sql` | Turn sign-free access to warehouse data on and off. |
+| `supabase/sync.sql` | Lets the site fetch only changed rows and load old scans as totals. Run once after schema.sql and costs.sql. |
 | `supabase/seed.sql` | Starter data: products, shelves, opening stock. No orders. |
 | `supabase/schema.sql` | Tables, the scan ledger, detector views, the shop catalogue view, the `place_order` and `order_status` functions, and row-level security. |
 
@@ -75,3 +76,9 @@ low beep, and nothing is written. A correct scan writes one PICK row and moves t
 - When signed in, the database is the source of truth for costs; browser-only edits can be uploaded or discarded.
 
 **Re-run `supabase/costs.sql`** after pulling (safe to repeat), then `lock-down.sql`, and switch off email sign-ups in Supabase.
+
+## Loading and demand (incremental sync, stock-out correction)
+- **Run `supabase/sync.sql` once** (safe to repeat). It adds `updated_at` stamps (set by the database) to the tables whose rows change, a `created_at` stamp to `order_lines`, and the `scan_balance_before` function.
+- **First load:** scans older than 60 days arrive as one total per product per shelf; newer scans arrive row by row. Stock on every shelf stays exact.
+- **Every refresh:** only new or changed rows are fetched, about 50 rows instead of every row of every table. A full reload runs every 30 minutes as a backstop. Without `sync.sql`, the site falls back to reloading whole tables, as before.
+- **Stock-out correction:** reorder demand is the average over days the product was in stock. A day counts as out of stock if it ended with nothing to sell, or started empty and sold nothing. Each day's closing stock is rebuilt from today's sellable stock minus every receipt, return, order, write-off and count shortage since. With fewer than 3 in-stock days in the window, it falls back to the plain average. The reorder table shows "N days out · was X" where this changed the number.

@@ -262,7 +262,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
       <div class="tw"><table><thead><tr><th>Product</th><th class="n">Sold</th><th class="n">On hand</th><th class="n">Days of cover</th><th>Shelf</th></tr></thead><tbody id="roWorst"></tbody></table></div></div>
   </div>
   <div class="panel"><h3>Reorder <span class="pill neutral" id="roOrderN"></span></h3>
-    <p class="small muted">Reorder point = average daily sales × lead time + safety stock. Safety stock = z × daily variation × √lead time. On hand is book stock (received + sellable returns − dispatched), so a missed scan cannot hide a shortage. Type a lead time on any row to override the default for that SKU.</p>
+    <p class="small muted">Reorder point = average daily sales × lead time + safety stock. Daily sales count only the days the product was in stock: a day it sold nothing because the shelf was empty is not zero demand. Safety stock = z × daily variation × √lead time. On hand is book stock (received + sellable returns − dispatched), so a missed scan cannot hide a shortage. Type a lead time on any row to override the default for that SKU.</p>
     <div class="tw"><table><thead><tr><th>Product</th><th>Class</th><th class="n">Sales/day</th><th class="n">Variation</th><th class="n">Lead time (d)</th><th class="n">Safety stock</th><th class="n">Reorder point</th><th class="n">On hand</th><th class="n">On order</th><th class="n">Days left</th><th class="n">Order qty</th><th>Status</th></tr></thead><tbody id="roBody"></tbody></table></div></div>
 </section>
 
@@ -632,9 +632,25 @@ function analyse(){
   for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id,book.get(l.sku_id)-l.qty);
   for(const w of (S.write_offs||[])) if(book.has(w.sku_id)) book.set(w.sku_id,book.get(w.sku_id)-w.qty);
   for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id,book.get(c.sku_id)+Math.min(0,c.counted_qty-c.system_qty));
+  // Stock-out correction. A day with no stock sells nothing, which is not zero demand. Rebuild each day's
+  // closing sellable stock by walking back from now: closing(d) = sellable now - every change after day d.
+  // Changes: + receipts, + sellable returns, - orders placed (not cancelled), - write-offs, - count shortages.
+  const chg=new Map(S.skus.map(s=>[s.sku_id,{day:new Array(W).fill(0), after:0}]));
+  const addChg=(sku,t,q)=>{ const c=chg.get(sku); if(!c||!(t>=first)) return; if(t>=end) c.after+=q; else c.day[Math.floor((t-first)/DAY)]+=q; };
+  for(const l of S.po_lines){ const po=I.po.get(l.po_id); if(po&&po.received_at&&l.qty_received!=null) addChg(l.sku_id,ms(po.received_at),l.qty_received); }
+  for(const r of S.customer_returns) if(r.condition==="sellable") addChg(r.sku_id,ms(r.received_at),r.qty);
+  for(const o of S.sales_orders){ if(o.status==="cancelled") continue; const t=ms(o.placed_at); for(const l of (I.linesByOrder.get(o.order_id)||[])) addChg(l.sku_id,t,-l.qty); }
+  for(const w of (S.write_offs||[])) addChg(w.sku_id,ms(w.written_at),-w.qty);
+  for(const c of (S.cycle_counts||[])) addChg(c.sku_id,ms(c.counted_at),Math.min(0,c.counted_qty-c.system_qty));
+  const openQty=new Map(); for(const o of S.sales_orders){ if(!["placed","picking","packed"].includes(o.status)) continue; for(const l of (I.linesByOrder.get(o.order_id)||[])) openQty.set(l.sku_id,(openQty.get(l.sku_id)||0)+l.qty); }
   const rows=S.skus.map(s=>{
-    const d=daily.get(s.sku_id), units=d.reduce((a,b)=>a+b,0), avg=units/W;
-    const sd=Math.sqrt(d.reduce((a,b)=>a+(b-avg)**2,0)/Math.max(1,W-1));
+    const d=daily.get(s.sku_id), units=d.reduce((a,b)=>a+b,0), avgRaw=units/W;
+    const c=chg.get(s.sku_id), sellNow=book.get(s.sku_id)-(openQty.get(s.sku_id)||0);
+    const inStock=[]; let close=sellNow-c.after, outDays=0;
+    for(let i=W-1;i>=0;i--){ const open=close-c.day[i]; const out = close<=0 || (open<=0 && d[i]===0); if(out) outDays++; else inStock.push(d[i]); close=open; }
+    // Demand = average over days the product could be bought. With fewer than 3 such days, fall back to the plain average.
+    const useDays = inStock.length>=3 ? inStock : d, avg = useDays.reduce((a,b)=>a+b,0)/Math.max(1,useDays.length);
+    const sd=Math.sqrt(useDays.reduce((a,b)=>a+(b-avg)**2,0)/Math.max(1,useDays.length-1));
     const la=leadAcc.get(s.sku_id), L = s.lead_time_days!=null ? +s.lead_time_days : la ? Math.max(0.1,la.t/la.n) : RO.lead, leadSrc = s.lead_time_days!=null ? "set" : la ? "measured" : "default";
     const ss=Math.ceil(z*sd*Math.sqrt(L)), rop=Math.ceil(avg*L)+ss, upTo=Math.ceil(avg*(L+1))+ss;   // reviewed daily
     const onHand=book.get(s.sku_id), oo=onOrder.get(s.sku_id), pos=onHand+oo;
@@ -643,7 +659,7 @@ function analyse(){
     if(order>0 && avg>0){ const cap=Math.floor(avg*kc.shelf); if(pos+order>cap){ order=Math.max(0,cap-pos); capped=true; } }   // never order more than can sell before it expires
     const status = onHand<=0 ? "out" : (pos<=rop && order>0) ? "order" : "ok";
     const home=homeOf(s.sku_id), zone=home ? I.loc.get(home).zone : null;
-    return {sku:s, units, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
+    return {sku:s, units, avgRaw, outDays, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
   }).sort((a,b)=>b.lines-a.lines || b.gpu-a.gpu);   // pick lines drive effort (Christopher ch.3); margin breaks ties
   const tot=rows.reduce((a,r)=>a+r.lines,0)||1; let cum=0;
   const anySales=rows.some(r=>r.lines>0);
@@ -672,7 +688,7 @@ function renderReorder(){
   const all=rows.slice().sort((a,b)=>rank[a.status]-rank[b.status] || a.daysLeft-b.daysLeft);
   $("#roOrderN").textContent=`${need.length} to order`;
   const pill={out:'<span class="pill bad">Out of stock</span>', order:'<span class="pill warn">Order now</span>', ok:'<span class="pill good">OK</span>'};
-  $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">±${r.sd.toFixed(1)}</td>
+  $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}${r.outDays?`<br><span class="small muted" title="Average over the days it was in stock. Plain average: ${r.avgRaw.toFixed(1)}/day">${r.outDays} day${r.outDays>1?"s":""} out · was ${r.avgRaw.toFixed(1)}</span>`:""}</td><td class="n">±${r.sd.toFixed(1)}</td>
     <td class="n"><input type="number" class="lt" data-sku="${esc(r.sku.sku_id)}" value="${r.ownLead?r.L:""}" placeholder="${r.leadSrc==='measured'?r.L.toFixed(1)+' measured':RO.lead}" min="0" step="0.5" style="width:70px;text-align:right;padding:4px 6px" aria-label="Lead time for ${esc(r.sku.name)}"></td>
     <td class="n">${r.ss}</td><td class="n"><b>${r.rop}</b></td><td class="n">${r.onHand}</td><td class="n">${r.onOrder||""}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(1):"—"}</td><td class="n"><b>${r.order||""}</b>${r.capped?' <span class="pill warn">capped by shelf life</span>':""}</td><td>${pill[r.status]}</td></tr>`).join("");
 }
@@ -979,8 +995,8 @@ function renderActions(){
    ["P1","Write off expired and damaged stock as it happens","Shows the true loss and stops the shop selling it.","Inventory",'<span class="pill neutral">Ongoing</span>'],
    ["P2","Move slow Class C items to reserve and fast items to zone A","Shorter walks per pick, so more orders per picker.","Relocation",'<span class="pill neutral">Ongoing</span>'],
    ["P2","Count one aisle every day","Counts find shortages the scans missed; the ledger stays honest.","Inventory",'<span class="pill neutral">Ongoing</span>'],
-   ["P3","Stop reloading every table every minute","Fine now; breaks at roughly 100k scans. Needs SQL views and incremental loading.","Code",'<span class="pill neutral">Not built</span>'],
-   ["P3","Correct demand for days a product was out of stock","Reorder quantities are understated for stocked-out items.","Code",'<span class="pill neutral">Not built</span>']
+   ["P3","Run sync.sql so refreshes fetch only changes","Refreshes now ask only for new or changed rows, and scans older than 60 days load as totals. Until sync.sql is run, it falls back to reloading whole tables.","Supabase",'<span class="pill warn">Needs you</span>'],
+   ["P3","Correct demand for days a product was out of stock","Reorder now averages sales over in-stock days only; the reorder table shows how many days each product was out.","Code",'<span class="pill good">Built</span>']
   ];
   $("#actBody").innerHTML=A_.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r[0]}</b></td><td>${r[1]}</td><td class="small">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join("");
 }
@@ -991,7 +1007,7 @@ function focusSlot(code){
 let refreshTimer=null;
 function scheduleRefresh(){
   clearInterval(refreshTimer); const sec=60;   // reload every minute when signed in
-  if(sec>0) refreshTimer=setInterval(async()=>{ if(MODE!=="supabase") return; try{ await loadAll(); render(); }catch(e){} }, sec*1000);
+  if(sec>0) refreshTimer=setInterval(async()=>{ if(MODE!=="supabase") return; try{ await syncChanges(); render(); }catch(e){} }, sec*1000);
 }
 function boot(){
   document.addEventListener("click", e=>{
@@ -1014,9 +1030,64 @@ function boot(){
   window.addEventListener("hashchange",route);
   PNL.init(); S=EMPTY(); reindex(); route(); scheduleRefresh(); autoConnect();
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
-  setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await loadAll(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
+  setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await syncChanges(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
 }
-async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; await PNL.loadOpt(); reindex(); }
+// ---------- Loading: everything once, then only what changed ----------
+// Without this, every refresh re-downloaded every row of every table: fine at a few thousand scans, too slow by ~100k.
+const KEEP_RAW_DAYS=60;                       // raw scans kept in the browser; older ones arrive as one total per product per shelf
+const BY_UPDATED=["skus","locations","purchase_orders","po_lines","sales_orders","customer_returns"];   // rows that change: fetched by updated_at
+const BY_ID=["scan_events","cycle_counts"];   // rows only ever added: fetched by id
+const SYNC={wm:{}, maxId:{}, noStamp:new Set(), busy:false, lastFull:0};
+const pkOf=(t,r)=>(PK[t]||["id"]).map(c=>r[c]).join("|");
+async function fetchPaged(table, filter){
+  const out=[]; for(let from=0;;from+=1000){ let q=filter(sb.from(table).select("*")); for(const c of (PK[table]||[])) q=q.order(c,{ascending:true});
+    const {data,error}=await q.range(from,from+999); if(error) throw new Error(table+": "+error.message); out.push(...data); if(data.length<1000) break; } return out;
+}
+async function loadScans(){
+  const cut=new Date(Date.now()-KEEP_RAW_DAYS*DAY).toISOString();
+  const {data,error}=await sb.rpc("scan_balance_before",{p_before:cut});
+  if(error) return fetchAll("scan_events");    // sync.sql not run yet: read the whole ledger, as before
+  const opening=(data||[]).map(r=>({id:null, opening:true, station:+r.qty>0?"IN":"OUT", event_type:"OPENING", sku_id:r.sku_id, location_code:r.location_code,
+    qty:Math.abs(+r.qty), ref_type:null, ref_id:null, operator:"Balance before "+cut.slice(0,10), scanned_at:r.last_at}));
+  return opening.concat(await fetchPaged("scan_events", q=>q.gte("scanned_at",cut)));
+}
+function markSynced(){
+  const stamp=t=>t==="order_lines"?"created_at":"updated_at";
+  for(const t of [...BY_UPDATED,"order_lines"]){ const rows=S[t]||[];
+    if(rows.length && rows[0][stamp(t)]===undefined){ SYNC.noStamp.add(t); continue; }      // column missing: sync.sql not run
+    SYNC.noStamp.delete(t); SYNC.wm[t]=rows.reduce((m,r)=>Math.max(m,ms(r[stamp(t)])||0),0); }
+  for(const t of BY_ID) SYNC.maxId[t]=(S[t]||[]).reduce((m,r)=>r.id!=null?Math.max(m,+r.id):m,0);
+}
+async function loadAll(){
+  const next={}; for(const t of TABLES){ if(t!=="scan_events") next[t]=await fetchAll(t); }
+  next.scan_events=await loadScans();
+  S=next; await PNL.loadOpt(); markSynced(); reindex(); SYNC.lastFull=Date.now();
+}
+async function syncChanges(){
+  if(SYNC.busy || !S.skus) return;
+  if(Date.now()-SYNC.lastFull > 30*60e3){ SYNC.busy=true; try{ await loadAll(); } finally { SYNC.busy=false; } return; }   // backstop: a full reload every 30 minutes
+  SYNC.busy=true;
+  try{
+    const merge=(t,rows)=>{ if(!rows.length) return; const at=new Map(S[t].map((r,i)=>[pkOf(t,r),i]));
+      for(const r of rows){ const k=pkOf(t,r); if(at.has(k)) S[t][at.get(k)]=r; else { at.set(k,S[t].length); S[t].push(r); } } };
+    for(const t of [...BY_UPDATED,"order_lines"]){
+      const col=t==="order_lines"?"created_at":"updated_at";
+      if(SYNC.noStamp.has(t)){ S[t]=await fetchAll(t); continue; }
+      // A row can be stamped a moment before its transaction commits. While the newest change is recent,
+      // re-read the last 2 minutes (merging by key makes repeats harmless); once it is older, ask only for newer rows.
+      const wm=SYNC.wm[t]||0, recent=Date.now()-wm < 10*60e3;
+      try{ const rows=await fetchPaged(t,q=> recent ? q.gte(col,new Date(Math.max(0,wm-120000)).toISOString()) : q.gt(col,new Date(wm).toISOString())); merge(t,rows); for(const r of rows) SYNC.wm[t]=Math.max(SYNC.wm[t]||0,ms(r[col])); }
+      catch(e){ SYNC.noStamp.add(t); S[t]=await fetchAll(t); }
+    }
+    for(const t of BY_ID){
+      S[t]=(S[t]||[]).filter(r=>r.id!=null || r.opening);      // rows this page inserted itself come back from the database with their id
+      const from=Math.max(0,(SYNC.maxId[t]||0)-50);              // ids can commit out of order: re-read the last 50
+      const rows=await fetchPaged(t,q=>q.gt("id",from)); merge(t,rows); for(const r of rows) SYNC.maxId[t]=Math.max(SYNC.maxId[t]||0,+r.id);
+    }
+    await PNL.loadOpt();                                          // costs, rates, bags, write-offs: small tables, read whole
+    reindex();
+  } finally { SYNC.busy=false; }
+}
 // On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
 async function autoConnect(){
   const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
