@@ -624,6 +624,22 @@ function analyse(){
   const daily=new Map(S.skus.map(s=>[s.sku_id,new Array(W).fill(0)])), lineCnt=new Map();
   for(const o of S.sales_orders){ if(o.status==="cancelled") continue; const t=ms(o.placed_at); if(t<first||t>=end) continue;
     const di=Math.floor((t-first)/DAY); for(const l of (I.linesByOrder.get(o.order_id)||[])) { const d=daily.get(l.sku_id); if(d){ d[di]+=l.qty; lineCnt.set(l.sku_id,(lineCnt.get(l.sku_id)||0)+1); } } }
+  // Days the shelf was empty hide real demand (nobody can buy what is not there). Rebuild each day's closing stock from the scan ledger,
+  // and on a day that closed at zero use at least the normal daily demand of the days it was in stock.
+  const evBySku=new Map(); for(const e of S.scan_events){ let a=evBySku.get(e.sku_id); if(!a){ a=[]; evBySku.set(e.sku_id,a); } a.push(e); }
+  const oosDays=new Map();
+  for(const [sku,evs] of evBySku){
+    const d=daily.get(sku); if(!d) continue;
+    let run=0, sawStock=false; const endOf=new Array(W).fill(null), step=evs.map(e=>[ms(e.scanned_at),(e.station==="IN"?1:-1)*e.qty]).sort((a,b)=>a[0]-b[0]);
+    let k=0; for(let i=0;i<W;i++){ const dayEnd=first+(i+1)*DAY; while(k<step.length && step[k][0]<dayEnd){ run+=step[k][1]; if(run>0) sawStock=true; k++; } endOf[i]=run; }
+    if(!sawStock) continue;                                          // no stock history: nothing to correct
+    const start=endOf.findIndex(x=>x>0); if(start<0) continue;       // days before the SKU first had stock are not stock-outs
+    const out=[], ok=[]; for(let i=start;i<W;i++){ (endOf[i]===0 ? out : ok).push(i); }
+    if(!out.length || ok.length<Math.ceil((W-start)/2)) continue;    // need at least half the days in stock to know the normal rate
+    const normal=ok.reduce((a,i)=>a+d[i],0)/ok.length;
+    for(const i of out) d[i]=Math.max(d[i],normal);
+    oosDays.set(sku,out.length);
+  }
   // lead time measured from your own purchase orders (ordered_at to received_at)
   const leadAcc=new Map(); for(const l of S.po_lines){ const po=I.po.get(l.po_id); if(!po||!po.received_at||!po.ordered_at||l.qty_received==null) continue; const dd=(ms(po.received_at)-ms(po.ordered_at))/DAY; if(!(dd>=0)) continue; const a=leadAcc.get(l.sku_id)||{t:0,n:0}; a.t+=dd; a.n++; leadAcc.set(l.sku_id,a); }
   const book=new Map(S.skus.map(s=>[s.sku_id,0])), onOrder=new Map(S.skus.map(s=>[s.sku_id,0]));
@@ -643,7 +659,7 @@ function analyse(){
     if(order>0 && avg>0){ const cap=Math.floor(avg*kc.shelf); if(pos+order>cap){ order=Math.max(0,cap-pos); capped=true; } }   // never order more than can sell before it expires
     const status = onHand<=0 ? "out" : (pos<=rop && order>0) ? "order" : "ok";
     const home=homeOf(s.sku_id), zone=home ? I.loc.get(home).zone : null;
-    return {sku:s, units, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
+    return {sku:s, oos:oosDays.get(s.sku_id)||0, units, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
   }).sort((a,b)=>b.lines-a.lines || b.gpu-a.gpu);   // pick lines drive effort (Christopher ch.3); margin breaks ties
   const tot=rows.reduce((a,r)=>a+r.lines,0)||1; let cum=0;
   const anySales=rows.some(r=>r.lines>0);
@@ -672,7 +688,7 @@ function renderReorder(){
   const all=rows.slice().sort((a,b)=>rank[a.status]-rank[b.status] || a.daysLeft-b.daysLeft);
   $("#roOrderN").textContent=`${need.length} to order`;
   const pill={out:'<span class="pill bad">Out of stock</span>', order:'<span class="pill warn">Order now</span>', ok:'<span class="pill good">OK</span>'};
-  $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}</td><td class="n">±${r.sd.toFixed(1)}</td>
+  $("#roBody").innerHTML=all.map(r=>`<tr><td>${esc(r.sku.name)}</td><td>${r.cls}</td><td class="n">${r.avg.toFixed(1)}${r.oos?` <span class="pill warn" title="Demand adjusted: the shelf was empty on ${r.oos} day(s), so sales those days understate demand">${r.oos}d out</span>`:""}</td><td class="n">±${r.sd.toFixed(1)}</td>
     <td class="n"><input type="number" class="lt" data-sku="${esc(r.sku.sku_id)}" value="${r.ownLead?r.L:""}" placeholder="${r.leadSrc==='measured'?r.L.toFixed(1)+' measured':RO.lead}" min="0" step="0.5" style="width:70px;text-align:right;padding:4px 6px" aria-label="Lead time for ${esc(r.sku.name)}"></td>
     <td class="n">${r.ss}</td><td class="n"><b>${r.rop}</b></td><td class="n">${r.onHand}</td><td class="n">${r.onOrder||""}</td><td class="n">${isFinite(r.daysLeft)?r.daysLeft.toFixed(1):"—"}</td><td class="n"><b>${r.order||""}</b>${r.capped?' <span class="pill warn">capped by shelf life</span>':""}</td><td>${pill[r.status]}</td></tr>`).join("");
 }
@@ -1016,7 +1032,24 @@ function boot(){
   // Orders tab: look for new orders every 15 s (from Supabase when connected), otherwise just update the ages.
   setInterval(async()=>{ if(location.hash!=="#orders") return; if(MODE==="supabase"){ try{ await loadAll(); }catch(e){} } NOW=Date.now(); render(); }, 15000);
 }
-async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fetchAll(t); S=next; await PNL.loadOpt(); reindex(); }
+// Append-only tables (every row has an increasing id) are fetched once, then only rows newer than the last one seen.
+// Everything else, and a full reload every 30 minutes, still reads the whole table so edits and deletes are picked up.
+const INCR=["scan_events","cycle_counts"]; let LAST_FULL=0;
+async function fetchSince(table,afterId){
+  const out=[]; for(let from=0;;from+=1000){ const {data,error}=await sb.from(table).select("*").gt("id",afterId).order("id",{ascending:true}).range(from,from+999); if(error) throw new Error(table+": "+error.message); out.push(...data); if(data.length<1000) break; } return out;
+}
+async function loadAll(full){
+  const doFull = full===true || !LAST_FULL || Date.now()-LAST_FULL>30*60*1000, next={};
+  for(const t of TABLES){
+    if(!doFull && INCR.includes(t) && S[t] && S[t].length){
+      const base=S[t].filter(r=>r.id!=null);                       // rows added locally (no id yet) are replaced by the database copy
+      const maxId=base.reduce((m,r)=>Math.max(m,+r.id),0);
+      next[t]=base.concat(await fetchSince(t,maxId));
+    } else next[t]=await fetchAll(t);
+  }
+  if(doFull) LAST_FULL=Date.now();
+  S=next; await PNL.loadOpt(); reindex();
+}
 // On page load: if this browser signed in before, Supabase still holds the session, so load live data straight away.
 async function autoConnect(){
   const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
