@@ -39,9 +39,9 @@ const PNL = (function () {
     st.err = "";
     const { error } = await sb.auth.signInWithPassword({ email, password: pw });
     if (error) { st.err = error.message; renderCosts(); return; }
-    await loadAll(); render();
+    await loadAll(true); render();
   }
-  async function signOut() { await sb.auth.signOut(); st.auth = false; st.email = ""; await loadAll(); render(); }
+  async function signOut() { await sb.auth.signOut(); st.auth = false; st.email = ""; await loadAll(true); render(); }
 
   // ---------- stock value and expiry (uses the page's own reorder analysis) ----------
   function stockRows() {
