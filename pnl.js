@@ -16,10 +16,11 @@ const PNL = (function () {
 
   // ---------- data access (database when signed in, this browser otherwise) ----------
   function dbRates() { const m = {}; for (const r of (S.cost_rates || [])) m[r.key] = +r.value; return m; }
-  function R() { return Q.rates(Object.assign({}, ls.get(LS.rates, {}), dbRates())); }
-  function lines() { return (S.cost_lines && S.cost_lines.length ? S.cost_lines.filter(l => l.active !== false) : ls.get(LS.lines, [])); }
-  function bags() { return S.bag_types && S.bag_types.length ? S.bag_types.map(b => ({ id: b.id, name: b.name, cm3: +b.cm3, price: +b.price, src: "entered" })) : (ls.get(LS.bags, null) || Q.DEFAULT_BAGS); }
-  function costRow(id) { const d = (S.sku_costs || []).find(r => r.sku_id === id); return d || ls.get(LS.sku, {})[id] || null; }
+  function R() { return Q.rates(Object.assign({}, st.auth ? {} : ls.get(LS.rates, {}), dbRates())); }
+  function lines() { return (st.auth || (S.cost_lines && S.cost_lines.length)) ? (S.cost_lines || []).filter(l => l.active !== false) : ls.get(LS.lines, []); }
+  function bags() { return (S.bag_types && S.bag_types.length) ? S.bag_types.map(b => ({ id: b.id, name: b.name, cm3: +b.cm3, price: +b.price, src: "entered" })) : (ls.get(LS.bags, null) || Q.DEFAULT_BAGS); }
+  function costRow(id) { const d = (S.sku_costs || []).find(r => r.sku_id === id); return d || (st.auth ? null : (ls.get(LS.sku, {})[id] || null)); }
+  const localEdits = () => Object.keys(ls.get(LS.rates, {})).length + Object.keys(ls.get(LS.sku, {})).length + ls.get(LS.lines, []).length;
   function ctx(r) {
     const sku = new Map(), row = new Map();
     for (const s of S.skus) { sku.set(s.sku_id, Q.skuCost(s, costRow(s.sku_id))); row.set(s.sku_id, s); }
@@ -47,7 +48,12 @@ const PNL = (function () {
     const an = analyse(), c = ctx();
     return an.rows.map(r => {
       const k = c.sku.get(r.sku.sku_id), u = unitVol(r.sku).v, on = Math.max(0, r.onHand);
-      const ex = Q.expiryRisk(on, r.avg, k.shelf, k.cost);
+      const bs = batches(r.sku.sku_id); let ex;
+      if (bs.length) {          // simulate selling oldest-expiry-first at today's rate; what cannot sell before its own expiry is at risk
+        let consumed = 0, atRisk = 0;
+        for (const b of bs) { const cap = Math.max(0, (b.exp - NOW) / DAY * r.avg - consumed), sold = Math.min(b.qty, cap); atRisk += b.qty - sold; consumed += sold; }
+        ex = { atRiskUnits: atRisk, atRiskValue: atRisk * k.cost, daysCover: r.avg > 0 ? on / r.avg : Infinity };
+      } else ex = Q.expiryRisk(on, r.avg, k.shelf, k.cost);
       return { r, k, on, value: on * k.cost, litres: on * u / 1000, avg: r.avg, ex, sku: r.sku };
     });
   }
@@ -60,15 +66,19 @@ const PNL = (function () {
     const wo = (S.write_offs || []).filter(w => ms(w.written_at) >= since);
     const woCost = wo.reduce((t, w) => t + w.qty * (+w.unit_cost_inr), 0);
     let shrink = 0; const cc = (S.cycle_counts || []).filter(x => ms(x.counted_at) >= since);
-    for (const x of cc) { const k = c.sku.get(x.sku_id); shrink += (x.system_qty - x.counted_qty) * (k ? k.cost : 0); }
+    for (const x of cc) { const k = c.sku.get(x.sku_id); shrink += Math.max(0, x.system_qty - x.counted_qty) * (k ? k.cost : 0); }   // only shortages are loss
+    // returns: the customer is refunded the item; restocked (sellable) units give their cost back; damaged/expired units stay a loss
+    let refunds = 0, cogsReturned = 0; const rets = (S.customer_returns || []).filter(r => ms(r.received_at) >= since);
+    for (const r of rets) { const k = c.sku.get(r.sku_id); if (!k) continue; const ln = (I.linesByOrder.get(r.order_id) || []).find(l => l.sku_id === r.sku_id);
+      const price = ln && ln.unit_price_inr != null ? +ln.unit_price_inr : k.price; refunds += r.qty * price / (1 + k.gst / 100); if (r.condition === "sellable") cogsReturned += r.qty * k.cost; }
     const sr = stockRows(), inv = sr.reduce((t, x) => t + x.value, 0);
-    const P = Q.periodPnL({ orders: ords, days: win, R: rs, ctx: c, customLines: lines(), invValueCost: inv, writeOffCost: woCost, shrinkCost: shrink });
-    return { P, c, sr, inv, wo, cc, woCost, shrink };
+    const P = Q.periodPnL({ orders: ords, days: win, R: rs, ctx: c, customLines: lines(), invValueCost: inv, writeOffCost: woCost, shrinkCost: shrink, refunds, cogsReturned });
+    return { P, c, sr, inv, wo, cc, woCost, shrink, rets };
   }
 
   function renderPnl() {
     if (!S.skus.length) { $("#pnlBanner").innerHTML = `<div class="msg warn"><span class="ic">!</span><span>No data yet. Connect to the store database.</span></div>`; return; }
-    const { P, c, sr, inv, wo } = compute(st.win), n = P.n, rs = c.R;
+    const { P, c, sr, inv, wo, rets } = compute(st.win), n = P.n, rs = c.R;
     const k = (l, v, d, sv) => `<div class="kpi ${sv || ""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
     const pc = n ? P.contribution / n : 0, sp = n ? P.storeProfit / n : 0;
     const be = P.breakevenOrdersPerDay;
@@ -91,15 +101,17 @@ const PNL = (function () {
     let rows = "";
     rows += `<tr class="muted"><td>Memo: sales at MRP (incl. GST)</td><td class="n">${inr(P.gross)}</td><td class="n">${n ? inr1(P.gross / n) : "—"}</td><td></td><td>${srcPill("ledger")}</td></tr>`;
     rows += `<tr class="muted"><td>Memo: discounts given vs MRP</td><td class="n">${inr(-P.promo)}</td><td class="n">${n ? inr1(-P.promo / n) : "—"}</td><td></td><td>${srcPill("entered")}</td></tr>`;
-    rows += line("Revenue (net of GST, incl. delivery fee)", P.revenue, "ledger", { total: true });
-    rows += line("Cost of goods sold", P.cogs, cogsSrc, { neg: true, indent: 1 });
+    rows += line("Revenue before refunds (net of GST, incl. delivery fee)", P.revenue + P.refunds, "ledger", { indent: 1 });
+    rows += line(`Refunds on returns (${rets.length} returns)`, P.refunds, "ledger", { neg: true, indent: 1 });
+    rows += line("Revenue", P.revenue, null, { total: true });
+    rows += line("Cost of goods sold (net of restocked returns)", P.cogs, cogsSrc, { neg: true, indent: 1 });
     rows += line("Gross profit", P.gp, null, { total: true });
     rows += line("Rider pay", P.rider, riderSrc, { neg: true, indent: 1 });
     rows += line("Bags", P.bags, "research", { neg: true, indent: 1 });
     rows += line("Payment fees", P.pay, "assumed", { neg: true, indent: 1 });
     if (P.other) rows += line("Other per-order costs you added", P.other, "entered", { neg: true, indent: 1 });
     rows += line(`Damaged / expired write-offs (${wo.length} entries)`, P.writeOff, "ledger", { neg: true, indent: 1 });
-    rows += line("Shrinkage found by counts", P.shrink, "ledger", { neg: true, indent: 1 });
+    rows += line("Shrinkage found by counts (shortages only)", P.shrink, "ledger", { neg: true, indent: 1 });
     rows += line("Contribution", P.contribution, null, { total: true });
     for (const f of P.fixedLines) rows += line(esc(f.label), f.amt, f.src, { neg: true, indent: 1 });
     rows += line(`Inventory carrying (₹${fmtN(inv)} stock at cost × ${rs.cost_of_funds_pct + rs.insurance_pct}%/yr)`, P.carrying, "assumed", { neg: true, indent: 1 });
@@ -156,7 +168,8 @@ const PNL = (function () {
     const r = R(), meta = Q.DEFAULT_RATES, saveTo = st.auth ? "the database" : "this browser only";
     let h = "";
     h += `<div class="panel"><h3>Sign in to save to the database</h3>${st.auth
-      ? `<p class="small">Signed in as <b>${esc(st.email)}</b>. Changes below are saved to the database. <button class="ghost" id="soBtn">Sign out</button></p>`
+      ? `<p class="small">Signed in as <b>${esc(st.email)}</b>. Changes below are saved to the database. <button class="ghost" id="soBtn">Sign out</button></p>
+         ${localEdits() ? `<div class="msg warn" style="margin-top:8px"><span class="ic">!</span><span>${localEdits()} edits made while signed out are still in this browser and are ignored now. <button class="ghost" id="upLocal">Upload them to the database</button> <button class="ghost" id="dropLocal">Discard them</button></span></div>` : ""}`
       : `<p class="small muted" style="margin:6px 0 10px">Without signing in, edits are kept in this browser only and damage/count records cannot be written to the ledger. Costs are staff-only: they are not exposed by the public link.</p>
          <div class="row" style="gap:8px;align-items:flex-end"><label class="f">Email<input type="email" id="siEmail" autocomplete="username"></label><label class="f">Password<input type="password" id="siPw" autocomplete="current-password"></label><button class="primary" id="siBtn">Sign in</button></div>
          ${st.err ? `<p class="small" style="color:var(--bad);margin-top:6px">${esc(st.err)}</p>` : ""}`}</div>`;
@@ -167,7 +180,7 @@ const PNL = (function () {
       h += `</div>`;
     }
     h += `<p class="small muted" style="margin-top:12px">Rider pay for a trip = base + (km − free km) × per-km. Reported ranges: base ₹15 to ₹35 per order, ₹9 to ₹12 per extra km, with incentives on top. Use your own rate card.</p>`;
-    h += `<table style="max-width:420px;margin-top:6px"><thead><tr><th>Trip distance</th>${[1, 2, 3, 5, 8].map(d => `<th class="n">${d} km</th>`).join("")}</tr></thead><tbody><tr><td>Rider pay</td>${[1, 2, 3, 5, 8].map(d => `<td class="n">${inr1(Q.riderPay(d, r))}</td>`).join("")}</tr></tbody></table></div>`;
+    h += `<table id="riderPrev" style="max-width:420px;margin-top:6px"><thead><tr><th>Trip distance</th>${[1, 2, 3, 5, 8].map(d => `<th class="n">${d} km</th>`).join("")}</tr></thead><tbody><tr><td>Rider pay</td>${[1, 2, 3, 5, 8].map(d => `<td class="n">${inr1(Q.riderPay(d, r))}</td>`).join("")}</tr></tbody></table></div>`;
 
     // extra costs
     const ln = lines();
@@ -181,39 +194,65 @@ const PNL = (function () {
       <div class="tw"><table><thead><tr><th>Size</th><th class="n">Volume (L)</th><th class="n">Price per bag (₹)</th></tr></thead><tbody>${bags().map(b => `<tr><td>${esc(b.name)}</td><td class="n">${(b.cm3 / 1000).toFixed(1)}</td><td class="n"><input type="number" step="any" data-bag="${esc(b.id)}" value="${b.price}" style="width:90px"></td></tr>`).join("")}</tbody></table></div></div>`;
 
     // sku sheet
-    h += `<div class="panel"><h3>Product costs, discounts and shelf life <span class="small muted">saved to ${saveTo}</span></h3><p class="small muted" style="margin:4px 0 10px">Unit cost is your average landed cost per unit, excluding GST. Until you enter it, the app uses MRP minus an assumed trade margin and tags it <b>assumed</b>. Discount % sets the selling price to MRP × (1 − d)${st.auth ? ", and updates the shop price" : ""}.</p>
-      <div class="tw"><table><thead><tr><th>Product</th><th class="n">MRP</th><th class="n">Unit cost</th><th class="n">GST %</th><th class="n">Shelf life (d)</th><th class="n">Discount %</th><th class="n">Sells at</th><th class="n">Margin</th></tr></thead><tbody>
+    h += `<div class="panel"><h3>Product costs, discounts and shelf life <span class="small muted">saved to ${saveTo}</span></h3><p class="small muted" style="margin:4px 0 10px">Barcode must be the EAN printed on the real pack, or the scan screen will refuse it. Unit cost is your average landed cost per unit, excluding GST. Until you enter it, the app uses MRP minus an assumed trade margin and tags it <b>assumed</b>. Discount % sets the selling price to MRP × (1 − d)${st.auth ? ", and updates the shop price" : ""}.</p>
+      <div class="tw"><table><thead><tr><th>Product</th><th>Barcode (EAN)</th><th class="n">MRP</th><th class="n">Unit cost</th><th class="n">GST %</th><th class="n">Shelf life (d)</th><th class="n">Discount %</th><th class="n">Sells at</th><th class="n">Margin</th></tr></thead><tbody>
       ${S.skus.map(s => { const row = costRow(s.sku_id), k = Q.skuCost(s, row), net = k.price / (1 + k.gst / 100);
-        return `<tr data-skurow="${esc(s.sku_id)}"><td><b>${esc(s.name)}</b></td><td class="n">₹${k.mrp}</td>
+        return `<tr data-skurow="${esc(s.sku_id)}"><td><b>${esc(s.name)}</b></td><td><input type="text" inputmode="numeric" data-f="barcode" value="${esc(s.barcode)}" style="width:130px"></td><td class="n">₹${k.mrp}</td>
         <td class="n"><input type="number" step="any" data-f="unit_cost_inr" value="${k.cost}" style="width:80px"> ${k.costSrc === "assumed" ? '<span class="pill warn">assumed</span>' : ""}</td>
         <td class="n"><input type="number" step="any" data-f="gst_pct" value="${k.gst}" style="width:60px"></td>
         <td class="n"><input type="number" step="1" data-f="shelf_life_days" value="${k.shelf}" style="width:70px"> ${k.shelfSrc === "assumed" ? '<span class="pill warn">assumed</span>' : ""}</td>
         <td class="n"><input type="number" step="any" data-f="discount_pct" value="${row && row.discount_pct != null ? row.discount_pct : ""}" placeholder="${(k.discount * 100).toFixed(0)}" style="width:70px"></td>
-        <td class="n">₹${k.price}</td><td class="n">${net > 0 ? ((net - k.cost) / net * 100).toFixed(0) + "%" : "—"}</td></tr>`; }).join("")}
+        <td class="n sp">₹${k.price}</td><td class="n mg">${net > 0 ? ((net - k.cost) / net * 100).toFixed(0) + "%" : "—"}</td></tr>`; }).join("")}
       </tbody></table></div></div>`;
     host.innerHTML = h;
   }
   const BASIS = { month: "per month", day: "per day", trip: "per trip", order: "per order (variable)", pct_sales: "% of sales (variable)" };
 
   // ---------- saving ----------
+  function refreshRider() { const t = $("#riderPrev"); if (!t) return; const r = R(); t.querySelector("tbody").innerHTML = `<tr><td>Rider pay</td>${[1, 2, 3, 5, 8].map(d => `<td class="n">${inr1(Q.riderPay(d, r))}</td>`).join("")}</tr>`; }
+  function refreshRow(id) {
+    const tr = document.querySelector(`[data-skurow="${CSS.escape(id)}"]`), s = I.sku.get(id); if (!tr || !s) return;
+    const k = Q.skuCost(s, costRow(id)), net = k.price / (1 + k.gst / 100);
+    tr.querySelector(".sp").textContent = "₹" + k.price; tr.querySelector(".mg").textContent = net > 0 ? ((net - k.cost) / net * 100).toFixed(0) + "%" : "—";
+  }
   async function saveRate(key, val) {
     const v = +val; if (!isFinite(v)) return;
-    if (st.auth) { const { error } = await sb.from("cost_rates").upsert({ key, value: v, updated_at: new Date().toISOString() }); if (error) { alert2("Could not save: " + error.message); return; } await loadAll(); }
+    if (st.auth) { const { error } = await sb.from("cost_rates").upsert({ key, value: v, updated_at: new Date().toISOString() }); if (error) { alert2("Could not save: " + error.message); return; }
+      S.cost_rates = (S.cost_rates || []).filter(r => r.key !== key).concat([{ key, value: v }]); }
     else { const m = ls.get(LS.rates, {}); m[key] = v; ls.set(LS.rates, m); }
-    render();
+    refreshRider();
   }
   async function saveSku(id, field, raw) {
-    const s = I.sku.get(id), cur = costRow(id), k = Q.skuCost(s, cur);
+    const s = I.sku.get(id);
+    if (field === "barcode") {
+      if (!st.auth) { popup("Sign in first. Barcodes are saved to the product list, which only staff can change."); renderCosts(); return; }
+      const code = String(raw).trim().replace(/\s+/g, ""); if (!/^\d{8,14}$/.test(code)) { popup("A barcode is 8 to 14 digits, as printed under the bars on the pack."); renderCosts(); return; }
+      const { error } = await sb.from("skus").update({ barcode: code }).eq("sku_id", id);
+      if (error) { popup("Could not save the barcode: " + error.message + (/duplicate|unique/i.test(error.message) ? " Another product already uses this barcode." : "")); renderCosts(); return; }
+      s.barcode = code; reindex(); return;
+    }
+    const cur = costRow(id), k = Q.skuCost(s, cur);
     const row = { sku_id: id, unit_cost_inr: cur && cur.unit_cost_inr != null ? +cur.unit_cost_inr : k.cost, gst_pct: k.gst, shelf_life_days: k.shelf, discount_pct: cur ? cur.discount_pct : null, cost_src: "entered" };
     row[field] = raw === "" ? (field === "discount_pct" ? null : row[field]) : +raw;
     if (field === "unit_cost_inr") row.cost_src = "entered";
     if (st.auth) {
       const { error } = await sb.from("sku_costs").upsert(Object.assign({}, row, { updated_at: new Date().toISOString() })); if (error) { alert2("Could not save: " + error.message); return; }
-      if (field === "discount_pct") { const price = row.discount_pct == null ? s.mrp_inr : Math.round(s.mrp_inr * (1 - row.discount_pct / 100)); const e2 = await sb.from("skus").update({ price_inr: price }).eq("sku_id", id); if (e2.error) alert2("Cost saved, but the shop price could not change: " + e2.error.message); }
-      await loadAll();
+      if (field === "discount_pct") { const price = row.discount_pct == null ? s.mrp_inr : Math.round(s.mrp_inr * (1 - row.discount_pct / 100)); const e2 = await sb.from("skus").update({ price_inr: price }).eq("sku_id", id); if (e2.error) alert2("Cost saved, but the shop price could not change: " + e2.error.message); else s.price_inr = price; }
+      S.sku_costs = (S.sku_costs || []).filter(r => r.sku_id !== id).concat([row]);
     } else { const m = ls.get(LS.sku, {}); m[id] = row; ls.set(LS.sku, m); }
-    render();
+    refreshRow(id);
   }
+  async function uploadLocal() {
+    const rates = ls.get(LS.rates, {}), skus = ls.get(LS.sku, {}), lns = ls.get(LS.lines, []);
+    try {
+      const rr = Object.keys(rates).map(key => ({ key, value: +rates[key] })); if (rr.length) { const r = await sb.from("cost_rates").upsert(rr); if (r.error) throw r.error; }
+      const sr = Object.values(skus); if (sr.length) { const r = await sb.from("sku_costs").upsert(sr); if (r.error) throw r.error; }
+      if (lns.length) { const r = await sb.from("cost_lines").insert(lns.map(l => ({ label: l.label, amount: l.amount, basis: l.basis }))); if (r.error) throw r.error; }
+    } catch (e) { popup("Could not upload: " + e.message); return; }
+    for (const k of [LS.rates, LS.sku, LS.lines]) { try { localStorage.removeItem(k); } catch (e) { } }
+    await loadAll(); render();
+  }
+  function dropLocal() { for (const k of [LS.rates, LS.sku, LS.lines]) { try { localStorage.removeItem(k); } catch (e) { } } renderCosts(); }
   async function addLine() {
     const label = $("#clLabel").value.trim(), amount = +$("#clAmt").value, basis = $("#clBasis").value; if (!label || !isFinite(amount)) return;
     if (st.auth) { const { error } = await sb.from("cost_lines").insert({ label, amount, basis }); if (error) { alert2(error.message); return; } await loadAll(); }
@@ -226,9 +265,8 @@ const PNL = (function () {
     render();
   }
   async function saveBag(id, price) {
-    if (st.auth) { const { error } = await sb.from("bag_types").update({ price: +price }).eq("id", id); if (error) { alert2(error.message); return; } await loadAll(); }
+    if (st.auth) { const { error } = await sb.from("bag_types").update({ price: +price }).eq("id", id); if (error) { alert2(error.message); return; } const b = (S.bag_types || []).find(x => x.id === id); if (b) b.price = +price; }
     else { const b = bags().map(x => x.id === id ? Object.assign({}, x, { price: +price }) : x); ls.set(LS.bags, b); }
-    render();
   }
   async function saveDist(orderId, raw) {
     const km = raw === "" ? null : +raw;
@@ -320,7 +358,8 @@ const PNL = (function () {
   }
   function nextExpiry(sku_id) {
     const b = batches(sku_id)[0]; if (!b) return null;
-    return new Date(b.exp).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) + (b.real ? "" : " (est.)");
+    const d = new Date(b.exp).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+    return b.exp < NOW ? d + (b.real ? "" : " (est.)") + " — ALREADY EXPIRED, do not ship; write it off" : d + (b.real ? "" : " (est.)");
   }
   async function recordPick(ref) {
     const [order, sku, qty, loc] = ref.split("|");
@@ -329,14 +368,97 @@ const PNL = (function () {
     if (error) { alert2(error.message); return; } await loadAll(); render();
   }
 
+  // ---------- pop-up message ----------
+  function popup(msg, kind) {
+    let ov = document.getElementById("msgOv"); if (ov) ov.remove();
+    ov = document.createElement("div"); ov.id = "msgOv"; ov.className = "ovl";
+    ov.innerHTML = `<div class="ovbox" role="alertdialog" aria-live="assertive"><p style="font-size:1.05rem;font-weight:600;color:var(--${kind === "ok" ? "good" : "bad"})">${kind === "ok" ? "Done" : "Stop"}</p><p style="margin:8px 0 16px">${esc(msg)}</p><button class="primary" id="msgOk">OK</button></div>`;
+    document.body.appendChild(ov); const b = ov.querySelector("#msgOk"); b.focus(); b.onclick = () => ov.remove();
+  }
+  function beep(ok) { try { const A = new (window.AudioContext || window.webkitAudioContext)(), o = A.createOscillator(), g = A.createGain(); o.frequency.value = ok ? 880 : 200; o.connect(g); g.connect(A.destination); g.gain.value = 0.15; o.start(); o.stop(A.currentTime + (ok ? 0.12 : 0.45)); } catch (e) { } }
+
+  // ---------- scan station: scan or type each barcode, in pick order; a wrong product is refused ----------
+  const SC = { id: null, flash: null, rejects: 0, busy: false, shelf: null, shelfSku: null };
+  function todo(id) {
+    return (I.linesByOrder.get(id) || []).map(l => {
+      const s = I.sku.get(l.sku_id), st = (I.stockBySku.get(l.sku_id) || []).filter(r => r.qty > 0), loc = st[0] ? st[0].location_code : null;
+      return { l, s, loc, walk: loc ? I.loc.get(loc).walk_m : 999, sc: I.byRef.get("PICK|" + id + "|" + l.sku_id) || 0, cold: !!(s && s.temp_class !== "ambient") };
+    }).sort((a, b) => (a.cold - b.cold) || (a.walk - b.walk));
+  }
+  function openScan(id) {
+    SC.id = id; SC.flash = null; SC.rejects = 0; SC.busy = false; SC.shelf = null; SC.shelfSku = null;
+    let ov = document.getElementById("scanOv"); if (ov) ov.remove();
+    ov = document.createElement("div"); ov.id = "scanOv"; ov.className = "ovl"; document.body.appendChild(ov); drawScan();
+  }
+  function closeScan() { const ov = document.getElementById("scanOv"); if (ov) ov.remove(); SC.id = null; loadAll().then(render).catch(() => render()); }
+  function drawScan() {
+    const ov = document.getElementById("scanOv"); if (!ov) return;
+    const L = todo(SC.id), total = L.reduce((t, x) => t + x.l.qty, 0), done = L.reduce((t, x) => t + Math.min(x.sc, x.l.qty), 0), exp = L.find(x => x.sc < x.l.qty);
+    const f = SC.flash;
+    let body = "";
+    if (!st.auth) {
+      body = `<p class="small" style="margin:10px 0">Scans are written to the stock ledger, so staff must sign in first.</p>
+        <div class="row" style="gap:8px;align-items:flex-end"><label class="f">Email<input type="email" id="scEmail" autocomplete="username"></label><label class="f">Password<input type="password" id="scPw" autocomplete="current-password"></label><button class="primary" id="scSign">Sign in</button></div>
+        ${st.err ? `<p class="small" style="color:var(--bad)">${esc(st.err)}</p>` : ""}`;
+    } else if (!exp) {
+      body = `<div class="msg ok" style="margin:12px 0"><span class="ic">✓</span><span>All ${total} items scanned. Close this and press Hand to rider.</span></div>`;
+    } else {
+      const needShelf = !SC.shelf || SC.shelfSku !== exp.s.sku_id;
+      body = `<div class="panel" style="margin:12px 0;border-left:4px solid var(--accent)"><span class="small muted">SCAN THIS NEXT · ${needShelf ? "STEP 1: THE SHELF LABEL" : "STEP 2: THE PRODUCT"}</span>
+          <div style="font-size:1.25rem;font-weight:700;margin:4px 0">${esc(exp.s.name)}</div>
+          <div class="row" style="gap:10px;align-items:center">${exp.loc ? locChip(exp.loc) : '<span class="pill bad">no shelf</span>'} <span class="small muted">barcode ${esc(exp.s.barcode)}</span> <span class="pill neutral">${exp.sc + 1} of ${exp.l.qty}</span></div></div>
+        <div class="row" style="gap:8px"><input type="text" id="scIn" autocomplete="off" placeholder="${needShelf ? "Scan the shelf label, or type its code" : "Scan the product barcode, or type it"} and press Enter" style="flex:1;font-size:1.1rem;padding:10px"><button class="primary" id="scGo">Enter</button></div>`;
+    }
+    const flash = f ? `<div class="msg ${f.ok ? "ok" : "err"}" style="margin-top:10px;font-size:1.05rem"><span class="ic">${f.ok ? "✓" : "✕"}</span><span><b>${esc(f.text)}</b></span></div>` : "";
+    ov.innerHTML = `<div class="ovbox" style="max-width:560px;width:100%;text-align:left">
+      <div class="row" style="justify-content:space-between;align-items:center"><h3>Scan order ${esc(SC.id)}</h3><span class="pill ${done === total ? "good" : "warn"}">${done} / ${total} scanned</span></div>
+      ${body}${flash}${SC.rejects ? `<p class="small" style="color:var(--bad);margin-top:6px">${SC.rejects} wrong scan${SC.rejects > 1 ? "s" : ""} refused this session</p>` : ""}
+      <div class="tw" style="margin-top:12px"><table><tbody>${L.map(x => `<tr><td>${x.sc >= x.l.qty ? "✓" : exp && x === exp ? "▶" : ""}</td><td>${esc(x.s ? x.s.name : x.l.sku_id)}</td><td class="n">${Math.min(x.sc, x.l.qty)}/${x.l.qty}</td></tr>`).join("")}</tbody></table></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" id="scClose">Close</button></div></div>`;
+    ov.querySelector("#scClose").onclick = closeScan;
+    const si = ov.querySelector("#scSign"); if (si) si.onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: ov.querySelector("#scEmail").value.trim(), password: ov.querySelector("#scPw").value }); if (error) { st.err = error.message; } else { st.err = ""; await loadAll(); } drawScan(); };
+    const inp = ov.querySelector("#scIn");
+    if (inp) { inp.focus(); inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); submitScan(); } }; inp.onblur = () => setTimeout(() => { const o = document.getElementById("scanOv"), i = o && o.querySelector("#scIn"); if (i && !o.contains(document.activeElement)) i.focus(); }, 50); ov.querySelector("#scGo").onclick = submitScan; }
+  }
+  async function submitScan() {
+    if (SC.busy) return; const inp = document.querySelector("#scIn"); if (!inp) return;
+    const code = inp.value.trim().replace(/\s+/g, ""); inp.value = ""; if (!code) return;
+    const L = todo(SC.id), exp = L.find(x => x.sc < x.l.qty); if (!exp) return;
+    const needShelf = !SC.shelf || SC.shelfSku !== exp.s.sku_id;
+    if (needShelf) {            // step 1: the shelf must be one that the ledger says holds this product
+      const up = code.toUpperCase(), shelfRow = I.loc.get(up);
+      const refuse = text => { SC.rejects++; beep(false); SC.flash = { ok: false, text }; drawScan(); };
+      if (!shelfRow) return refuse(I.ean.get(code) ? "Scan the SHELF label first, then the product." : `${code} is not a shelf label. Scan the label on the shelf${exp.loc ? " " + exp.loc : ""}.`);
+      const have = (I.stock.get(exp.s.sku_id + "|" + up) || { qty: 0 }).qty;
+      if (have <= 0) return refuse(`${up} holds no ${exp.s.name} in the ledger.${exp.loc ? " Go to " + exp.loc + "." : ""} If the stock really is on this shelf, count it on the Inventory tab so the ledger is corrected.`);
+      SC.shelf = up; SC.shelfSku = exp.s.sku_id; beep(true); SC.flash = { ok: true, text: `Shelf ${up} is right. Now scan the product.` }; return drawScan();
+    }
+    if (String(exp.s.barcode) !== code) {
+      const other = I.ean.get(code); SC.rejects++; beep(false);
+      SC.flash = { ok: false, text: other ? `Wrong product. That is ${other.name}. Scan ${exp.s.name} instead.` : `Barcode ${code} is not a known product. Scan ${exp.s.name}.` };
+      return drawScan();
+    }
+    const loc = SC.shelf;
+    SC.busy = true;
+    const row = { station: "OUT", scanner_id: "WEB", event_type: "PICK", sku_id: exp.s.sku_id, location_code: loc, qty: 1, ref_type: "ORDER", ref_id: SC.id, operator: st.email || "web" };
+    const { error } = await sb.from("scan_events").insert(row); SC.busy = false;
+    if (error) { SC.flash = { ok: false, text: "Could not save the scan: " + error.message }; beep(false); return drawScan(); }
+    S.scan_events.push(Object.assign({ scanned_at: new Date().toISOString() }, row)); reindex(); beep(true);
+    const n = exp.sc + 1; SC.flash = { ok: true, text: `${exp.s.name} ${n}/${exp.l.qty} scanned` };
+    if (((I.stock.get(exp.s.sku_id + "|" + loc) || { qty: 0 }).qty) <= 0) SC.shelf = null;      // shelf is empty in the ledger: next unit needs a new shelf scan
+    drawScan();
+  }
+
   // ---------- wiring ----------
   function init() {
     document.addEventListener("click", e => {
       if (e.target.closest("#siBtn")) return signIn($("#siEmail").value.trim(), $("#siPw").value);
       if (e.target.closest("#soBtn")) return signOut();
+      if (e.target.closest("#upLocal")) return uploadLocal();
+      if (e.target.closest("#dropLocal")) return dropLocal();
       if (e.target.closest("#clAdd")) return addLine();
       const d = e.target.closest("[data-delline]"); if (d) return delLine(d.dataset.delline);
-      const ps = e.target.closest("[data-pickscan]"); if (ps) return recordPick(ps.dataset.pickscan);
+      const sc = e.target.closest("[data-scan]"); if (sc) return openScan(sc.dataset.scan);
       if (e.target.closest("#woBtn")) return recordWriteOff();
       if (e.target.closest("#ccBtn")) return recordCount();
     });
@@ -350,5 +472,5 @@ const PNL = (function () {
     });
     const w = $("#pnlWin"); if (w) w.onchange = () => { st.win = +w.value; renderPnl(); };
   }
-  return { costRow, batches, nextExpiry, init, loadOpt, renderPnl, renderCosts, invForms, orderLine, st, compute, ctx };
+  return { popup, openScan, costRow, batches, nextExpiry, init, loadOpt, renderPnl, renderCosts, invForms, orderLine, st, compute, ctx };
 })();

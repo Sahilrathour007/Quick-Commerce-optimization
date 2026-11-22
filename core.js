@@ -177,6 +177,8 @@ function availability(S){
   for(const l of S.po_lines) if(l.qty_received!=null && book.has(l.sku_id)) book.set(l.sku_id, book.get(l.sku_id)+l.qty_received);
   for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id, book.get(r.sku_id)+r.qty);
   for(const l of S.order_lines){ const st=status.get(l.order_id); if(!book.has(l.sku_id) || st==="cancelled") continue; book.set(l.sku_id, book.get(l.sku_id)-l.qty); }
+  for(const w of (S.write_offs||[])) if(book.has(w.sku_id)) book.set(w.sku_id, book.get(w.sku_id)-w.qty);                              // damaged / expired
+  for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id, book.get(c.sku_id)+Math.min(0,c.counted_qty-c.system_qty));   // count shortages
   return book;   // dispatched AND open orders both reduce what is sellable
 }
 g.WMSCore={ buildDemo, loadShopOrders, saveShopOrders, mergeShopOrders, availability, SHOP_KEY };

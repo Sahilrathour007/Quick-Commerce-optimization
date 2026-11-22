@@ -158,6 +158,8 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:.85rem}
 .kv dt{color:var(--muted)} .kv dd{margin:0;font-weight:500}
 .skucard{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.ovl{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto}
+.ovbox{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:20px;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .rategrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
 .rategrid input{width:100%}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px}
@@ -180,6 +182,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
     <a href="#failures">Scan failures</a>
     <a href="#pnl">P&amp;L</a>
     <a href="#costs">Costs</a>
+    <a href="#actions">Actions</a>
   </nav>
 </div></header>
 
@@ -334,6 +337,11 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
   <div id="costsBody"></div>
 </section>
 
+<section class="view" id="v-actions" hidden>
+  <div class="head"><div><h2>Actions</h2><p>What to do next, worst first. Items marked "Live" are checked against your data right now.</p></div></div>
+  <div class="tw"><table><thead><tr><th>#</th><th>Priority</th><th>Action</th><th>Why it matters</th><th>Where</th><th>Status</th></tr></thead><tbody id="actBody"></tbody></table></div>
+</section>
+
 <!-- ================= SETUP ================= -->
 </main>
 
@@ -404,7 +412,7 @@ function bookQty(sku_id){
   for(const r of S.customer_returns) if(r.sku_id===sku_id && r.condition==="sellable") q+=r.qty;
   for(const l of S.order_lines) if(l.sku_id===sku_id && I.order.get(l.order_id)?.status==="dispatched") q-=l.qty;
   for(const w of (S.write_offs||[])) if(w.sku_id===sku_id) q-=w.qty;                                   // damaged / expired
-  for(const c of (S.cycle_counts||[])) if(c.sku_id===sku_id) q+=c.counted_qty-c.system_qty;            // count corrections
+  for(const c of (S.cycle_counts||[])) if(c.sku_id===sku_id) q+=Math.min(0,c.counted_qty-c.system_qty);   // a shortage is real loss; extra units found only mean a missed IN scan
   return q;
 }
 
@@ -444,8 +452,11 @@ const overOf = r => Math.max(0, r.scanned - r.expected);
 // ======================================================================
 // Persistence (demo memory or Supabase)
 // ======================================================================
+// Paging without a stable sort can skip or repeat rows, so every table is read in primary-key order.
+const PK={skus:["sku_id"],locations:["code"],purchase_orders:["po_id"],po_lines:["po_id","sku_id"],sales_orders:["order_id"],order_lines:["order_id","sku_id"],
+  customer_returns:["return_id"],scan_events:["id"],cycle_counts:["id"],sku_costs:["sku_id"],cost_rates:["key"],cost_lines:["id"],bag_types:["id"],write_offs:["id"]};
 async function fetchAll(table){
-  const out=[]; for(let from=0;;from+=1000){ const {data,error}=await sb.from(table).select("*").range(from,from+999); if(error) throw new Error(table+": "+error.message); out.push(...data); if(data.length<1000) break; } return out;
+  const out=[]; for(let from=0;;from+=1000){ let q=sb.from(table).select("*"); for(const c of (PK[table]||[])) q=q.order(c,{ascending:true}); const {data,error}=await q.range(from,from+999); if(error) throw new Error(table+": "+error.message); out.push(...data); if(data.length<1000) break; } return out;
 }
 const TABLES=["skus","locations","purchase_orders","po_lines","sales_orders","order_lines","customer_returns","scan_events","cycle_counts"];
 
@@ -469,6 +480,8 @@ function mapStats(){
   for(const l of S.po_lines) if(l.qty_received!=null && book.has(l.sku_id)) book.set(l.sku_id, book.get(l.sku_id)+l.qty_received);
   for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id, book.get(r.sku_id)+r.qty);
   for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id, book.get(l.sku_id)-l.qty);
+  for(const w of (S.write_offs||[])) if(book.has(w.sku_id)) book.set(w.sku_id, book.get(w.sku_id)-w.qty);
+  for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id, book.get(c.sku_id)+Math.min(0,c.counted_qty-c.system_qty));
   const shelfQ=sku=>(I.stockBySku.get(sku)||[]).reduce((a,r)=>a+r.qty,0);
   const gap=new Map(S.skus.map(s=>[s.sku_id, shelfQ(s.sku_id)-book.get(s.sku_id)]));
   const shelves=sku=>(I.stockBySku.get(sku)||[]).filter(r=>r.qty>0).length;
@@ -488,7 +501,7 @@ function cellState(code, layer){
 }
 const LEGENDS={
   stock:[["ok","Healthy: above reorder point"],["low","At or below reorder point"],["over","Overstocked: more than 2× the order-up-to level"],["bad","Zero or negative in the ledger"],["empty","Empty slot"]],
-  abc:[["cA","A: first 80% of units sold"],["cB","B: next 15%"],["cC","C: slow tail"],["empty","Empty slot"]],
+  abc:[["cA","A: first 80% of pick lines"],["cB","B: next 15%"],["cC","C: slow tail"],["empty","Empty slot"]],
   issue:[["bad","Negative stock: missed inbound scan, proven"],["warn","Book ≠ shelf, product on 2+ shelves, or 2 products in one slot"],["clean","Clean"],["empty","Empty slot"]],
 };
 const SW_COLOR={ok:"var(--accent-soft)",low:"var(--warn-soft)",over:"var(--over-soft)",bad:"var(--bad-soft)",warn:"var(--warn-soft)",clean:"var(--surface)",empty:"var(--surface-2)",cA:"var(--s1)",cB:"var(--s2)",cC:"var(--s3)"};
@@ -618,7 +631,7 @@ function analyse(){
   for(const r of S.customer_returns) if(r.condition==="sellable" && book.has(r.sku_id)) book.set(r.sku_id,book.get(r.sku_id)+r.qty);
   for(const l of S.order_lines) if(I.order.get(l.order_id)?.status==="dispatched" && book.has(l.sku_id)) book.set(l.sku_id,book.get(l.sku_id)-l.qty);
   for(const w of (S.write_offs||[])) if(book.has(w.sku_id)) book.set(w.sku_id,book.get(w.sku_id)-w.qty);
-  for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id,book.get(c.sku_id)+c.counted_qty-c.system_qty);
+  for(const c of (S.cycle_counts||[])) if(book.has(c.sku_id)) book.set(c.sku_id,book.get(c.sku_id)+Math.min(0,c.counted_qty-c.system_qty));
   const rows=S.skus.map(s=>{
     const d=daily.get(s.sku_id), units=d.reduce((a,b)=>a+b,0), avg=units/W;
     const sd=Math.sqrt(d.reduce((a,b)=>a+(b-avg)**2,0)/Math.max(1,W-1));
@@ -628,7 +641,7 @@ function analyse(){
     let order = pos<=rop ? Math.max(0, upTo-pos) : 0;
     const kc=QCCost.skuCost(s, PNL.costRow(s.sku_id)); let capped=false;
     if(order>0 && avg>0){ const cap=Math.floor(avg*kc.shelf); if(pos+order>cap){ order=Math.max(0,cap-pos); capped=true; } }   // never order more than can sell before it expires
-    const status = onHand<=0 ? "out" : pos<=rop ? "order" : "ok";
+    const status = onHand<=0 ? "out" : (pos<=rop && order>0) ? "order" : "ok";
     const home=homeOf(s.sku_id), zone=home ? I.loc.get(home).zone : null;
     return {sku:s, units, lines:lineCnt.get(s.sku_id)||0, gpu:kc.price/(1+kc.gst/100)-kc.cost, capped, leadSrc, avg, sd, L, ownLead:s.lead_time_days!=null, ss, rop, upTo, onHand, onOrder:oo, order, status, home, zone, daysLeft: avg>0 ? onHand/avg : Infinity};
   }).sort((a,b)=>b.lines-a.lines || b.gpu-a.gpu);   // pick lines drive effort (Christopher ch.3); margin breaks ties
@@ -647,8 +660,8 @@ function renderReorder(){
   const need=rows.filter(r=>r.status!=="ok"), out=rows.filter(r=>r.status==="out");
   const k=(l,v,d,sv)=>`<div class="kpi ${sv||""}"><span class="l">${l}</span><span class="v">${v}</span><span class="d">${d}</span></div>`;
   const pl=n=>n===1?"SKU":"SKUs";
-  $("#roKpis").innerHTML = k("Best movers", `${best.length} ${pl(best.length)}`, `sell 80% of everything (out of ${rows.length} SKUs)`)
-    + k("Worst movers", `${worst.length} ${pl(worst.length)}`, `sell only ${fmtPct(worst.reduce((a,r)=>a+r.share,0))} of everything`)
+  $("#roKpis").innerHTML = k("Best movers", `${best.length} ${pl(best.length)}`, `account for 80% of pick lines (out of ${rows.length} SKUs)`)
+    + k("Worst movers", `${worst.length} ${pl(worst.length)}`, `account for only ${fmtPct(worst.reduce((a,r)=>a+r.share,0))} of pick lines`)
     + k("Order today", `${need.length} ${pl(need.length)}`, `${fmtN(need.reduce((a,r)=>a+r.order,0))} units to order`, need.length?"sev-warn":"sev-good")
     + k("Out of stock", `${out.length} ${pl(out.length)}`, "nothing left to sell", out.length?"sev-bad":"sev-good");
   const shelf=r=>`${r.home?locChip(r.home):'<span class="pill bad">no shelf</span>'}${r.advice?` <span class="pill warn">${r.advice}</span>`:""}`;
@@ -665,7 +678,7 @@ function renderReorder(){
 }
 async function setLeadTime(sku_id, raw){
   const v = raw==="" ? null : Math.max(0, +raw);
-  if(MODE==="supabase"){ const {data,error}=await sb.from("skus").update({lead_time_days:v}).eq("sku_id",sku_id).select(); if(error||!data?.length){ alert2("Could not save the lead time: "+(error?.message||"the database refused the change. Run supabase/open-access.sql.")); return; } }
+  if(MODE==="supabase"){ const {data,error}=await sb.from("skus").update({lead_time_days:v}).eq("sku_id",sku_id).select(); if(error||!data?.length){ alert2("Could not save the lead time: "+(error?.message||"the database refused the change. Sign in on the Costs tab (staff only).")); return; } }
   const s=I.sku.get(sku_id); if(s) s.lead_time_days=v; renderReorder();
 }
 
@@ -819,10 +832,11 @@ function renderOrders(){
         <span class="pill ${age>15?"bad":age>10?"warn":"good"}">${age} min</span></div>
       ${o.customer_name?`<p class="small">${esc(o.customer_name)} · <span class="muted">${esc(o.address||"")}</span></p>`:""}
       <div class="tw"><table><thead><tr><th>Pick from</th><th>Product</th><th class="n">Qty</th></tr></thead><tbody>
-        ${lines.map(x=>`<tr><td>${x.loc?locChip(x.loc):'<span class="pill bad">no shelf</span>'}</td><td>${esc(x.s?.name||x.l.sku_id)}${x.fe?` <span class="small muted">take the batch expiring ${esc(x.fe)}</span>`:""}${x.short?' <span class="pill bad">short</span>':""}</td><td class="n"><b>${x.l.qty}</b><br><span class="pill ${x.sc>=x.l.qty?"good":"warn"}">${x.sc}/${x.l.qty} scanned</span>${x.sc<x.l.qty&&x.loc?` <button class="ghost" data-pickscan="${esc(o.order_id)}|${esc(x.l.sku_id)}|${x.l.qty-x.sc}|${esc(x.loc)}">Record</button>`:""}</td></tr>`).join("")}
+        ${lines.map(x=>`<tr><td>${x.loc?locChip(x.loc):'<span class="pill bad">no shelf</span>'}</td><td>${esc(x.s?.name||x.l.sku_id)}${x.fe?` <span class="small muted">take the batch expiring ${esc(x.fe)}</span>`:""}${x.short?' <span class="pill bad">short</span>':""}</td><td class="n"><b>${x.l.qty}</b><br><span class="pill ${x.sc>=x.l.qty?"good":"warn"}">${x.sc}/${x.l.qty} scanned</span></td></tr>`).join("")}
       </tbody></table></div>
       ${PNL.orderLine(o)}
       <div class="row" style="justify-content:space-between;align-items:center"><span class="pill neutral">${ST_LABEL[o.status]}</span>${o.total_inr?`<span class="small">₹${fmtN(o.total_inr)}</span>`:""}
+        <button class="primary" data-scan="${esc(o.order_id)}" style="background:var(--s3)">Scan items</button>
         <button class="primary" data-advance="${esc(o.order_id)}" data-to="${nx[0]}" ${nx[0]==="dispatched"&&lines.some(x=>x.sc<x.l.qty)?'disabled title="Every line must be scanned out first"':""}>${nx[1]}</button></div></div>`;
   }).join("") || `<div class="panel"><p class="muted">No open orders. New shop orders appear here as soon as they are placed.</p></div>`;
 }
@@ -831,7 +845,7 @@ async function setOrderStatus(id, status){
   if(status==="dispatched"){ const miss=(I.linesByOrder.get(id)||[]).filter(l=>(I.byRef.get("PICK|"+id+"|"+l.sku_id)||0)<l.qty);
     if(miss.length){ alert2("Cannot hand "+id+" to the rider: "+miss.length+" line(s) have no pick scan. Scan them out first (mistake-proofing: the error cannot pass to the next step)."); return; } }
   const patch={status}; if(status==="dispatched") patch.dispatched_at=new Date().toISOString();
-  if(MODE==="supabase"){ const {data,error}=await sb.from("sales_orders").update(patch).eq("order_id",id).select(); if(error||!data?.length){ alert2("Could not update the order: "+(error?.message||"the database refused the change. Run supabase/open-access.sql.")); return; } }
+  if(MODE==="supabase"){ const {data,error}=await sb.from("sales_orders").update(patch).eq("order_id",id).select(); if(error||!data?.length){ alert2("Could not update the order: "+(error?.message||"the database refused the change. Sign in on the Costs tab (staff only).")); return; } }
   Object.assign(o,patch);
   if(o.source==="shop"){ const list=WMSCore.loadShopOrders(); const so=list.find(x=>x.order_id===id); if(so){ Object.assign(so,patch); WMSCore.saveShopOrders(list); } }
   reindex(); render();
@@ -928,7 +942,7 @@ function barChart(host, tip, data){
 // ======================================================================
 // Routing & events
 // ======================================================================
-const VIEWS=["orders","map","inventory","reorder","relocate","failures","pnl","costs"];
+const VIEWS=["orders","map","inventory","reorder","relocate","failures","pnl","costs","actions"];
 function route(){
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "map";
   for(const n of VIEWS) $("#v-"+n).hidden = n!==v;
@@ -940,7 +954,35 @@ function render(v){
   const nNew=S.sales_orders.filter(o=>o.status==="placed").length; $("#ordBadge").hidden=!nNew; $("#ordBadge").textContent=nNew;
   $("#modePill").className="pill "+(MODE==="supabase"?"live":"bad"); $("#modePill").textContent = MODE==="supabase" ? "Supabase · live" : "Not connected";
   $("#offlineBar").hidden = MODE==="supabase" && S.skus.length>0;
-  if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures(); else if(v==="pnl") PNL.renderPnl(); else if(v==="costs") PNL.renderCosts();
+  const ae=document.activeElement, typing=(sel)=>ae && ae.matches && ae.matches("input,select,textarea") && ae.closest(sel);
+  if((v==="costs" && typing("#costsBody")) || (v==="orders" && typing("#ordList"))) return;   // a background refresh must not wipe what is being typed
+  if(v==="orders") renderOrders(); else if(v==="map") renderMap(); else if(v==="inventory") renderInventory(); else if(v==="reorder") renderReorder(); else if(v==="relocate") renderRelocate(); else if(v==="failures") renderFailures(); else if(v==="pnl") PNL.renderPnl(); else if(v==="costs") PNL.renderCosts(); else if(v==="actions") renderActions();
+}
+
+function renderActions(){
+  let neg=0,fail=0,orderNow=0,expired=0,fake=0,unitMeasured=0,measured=null;
+  try{ neg=[...I.stock.values()].filter(r=>r.qty<0).length; }catch(e){}
+  try{ fake=S.skus.filter(k=>!k.barcode || /^89010630000\d\d$/.test(k.barcode)).length; }catch(e){}
+  try{ const c=PNL.compute(28); measured=c&&c.P&&c.P.measuredShare!=null?c.P.measuredShare:null; }catch(e){}
+  try{ orderNow=analyse().rows.filter(r=>r.status==="order").length; }catch(e){}
+  const live=(ok,txt)=>`<span class="pill ${ok?"good":"bad"}">${txt}</span>`;
+  const A_=[
+   ["P0","Enter real invoice unit costs for every product","Unit costs are margin guesses, so the P&L is mostly assumed. Nothing else is trustworthy until this is done.","Costs tab",
+     measured==null?'<span class="pill neutral">Needs you</span>':live(measured>=0.6,"Live: "+Math.round(measured*100)+"% measured")],
+   ["P0","Enter the real barcode (EAN) of each product","The scan station refuses anything that does not match, so fake seed barcodes block real scanning.","Costs tab",
+     live(fake===0,"Live: "+fake+" missing or seed")],
+   ["P0","Run lock-down.sql and switch off email sign-ups","Without it, customer names, phones and addresses are readable by anyone with the public key.","Supabase",'<span class="pill warn">Needs you</span>'],
+   ["P0","Re-run the latest costs.sql","Adds price snapshots, write-off-aware stock and the hardened checkout.","Supabase",'<span class="pill warn">Needs you</span>'],
+   ["P1","Fix every negative shelf","A negative shelf proves an inbound scan was missed, so every stock number built on it is wrong.","Scan failures",live(neg===0,"Live: "+neg+" negative")],
+   ["P1","Scan every pick before Hand to rider","Unscanned dispatches are the main source of silent stock loss.","Orders",'<span class="pill good">Enforced</span>'],
+   ["P1","Reorder the SKUs flagged Order now","Stock-outs lose the sale and the basket.","Movers & reorder",live(orderNow===0,"Live: "+orderNow+" to order")],
+   ["P1","Write off expired and damaged stock as it happens","Shows the true loss and stops the shop selling it.","Inventory",'<span class="pill neutral">Ongoing</span>'],
+   ["P2","Move slow Class C items to reserve and fast items to zone A","Shorter walks per pick, so more orders per picker.","Relocation",'<span class="pill neutral">Ongoing</span>'],
+   ["P2","Count one aisle every day","Counts find shortages the scans missed; the ledger stays honest.","Inventory",'<span class="pill neutral">Ongoing</span>'],
+   ["P3","Stop reloading every table every minute","Fine now; breaks at roughly 100k scans. Needs SQL views and incremental loading.","Code",'<span class="pill neutral">Not built</span>'],
+   ["P3","Correct demand for days a product was out of stock","Reorder quantities are understated for stocked-out items.","Code",'<span class="pill neutral">Not built</span>']
+  ];
+  $("#actBody").innerHTML=A_.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r[0]}</b></td><td>${r[1]}</td><td class="small">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join("");
 }
 function focusSlot(code){
   MAP.sel=code; if(location.hash!=="#map"){ location.hash="#map"; } else renderMap();
@@ -979,12 +1021,12 @@ async function loadAll(){ const next={}; for(const t of TABLES) next[t]=await fe
 async function autoConnect(){
   const url=SUPABASE_URL, key=SUPABASE_ANON_KEY;
   if(!url||!key||!window.supabase){ $("#offlineTxt").textContent="Could not reach the store database. Check your internet connection and reload."; return; }
-  // No sign-in for now: reads with the public key. Works only after supabase/open-access.sql has been run.
+  // Reads with the public key first; if the database is locked down, sign in on the Costs tab.
   try{ sb=window.supabase.createClient(url,key); await loadAll(); MODE="supabase";
-    if(!S.skus.length) $("#offlineTxt").textContent="Connected, but the database shows no products. Run supabase/open-access.sql (and seed.sql if you have not) in the Supabase SQL Editor, then reload.";
+    if(!S.skus.length) $("#offlineTxt").textContent="Connected, but no products are visible to this browser. If the database is locked down, sign in on the Costs tab. On a new database, run supabase/seed.sql first.";
     render(); }catch(e){ MODE="offline"; $("#offlineTxt").textContent="Could not reach the store database. Check your internet connection and reload."; render(); }
 }
-function alert2(t){ $("#offlineTxt").textContent=t; $("#offlineBar").hidden=false; window.scrollTo({top:0}); }
+function alert2(t){ $("#offlineTxt").textContent=t; $("#offlineBar").hidden=false; PNL.popup(t); }
 boot();
 </script>
 </body>
