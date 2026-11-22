@@ -339,7 +339,7 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2)}
 
 <section class="view" id="v-actions" hidden>
   <div class="head"><div><h2>Actions</h2><p>What to do next, worst first. Items marked "Live" are checked against your data right now.</p></div></div>
-  <div class="tw"><table><thead><tr><th>#</th><th>Priority</th><th>Action</th><th>Why it matters</th><th>Where</th><th>Status</th></tr></thead><tbody id="actBody"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th>#</th><th>Priority</th><th>Action</th><th>Why it matters</th><th>Owner</th><th>Where</th><th>Status</th></tr></thead><tbody id="actBody"></tbody></table></div>
 </section>
 
 <!-- ================= SETUP ================= -->
@@ -967,22 +967,22 @@ function renderActions(){
   try{ orderNow=analyse().rows.filter(r=>r.status==="order").length; }catch(e){}
   const live=(ok,txt)=>`<span class="pill ${ok?"good":"bad"}">${txt}</span>`;
   const A_=[
-   ["P0","Enter real invoice unit costs for every product","Unit costs are margin guesses, so the P&L is mostly assumed. Nothing else is trustworthy until this is done.","Costs tab",
+   ["P0","Enter the real invoice cost of every product","Without real costs the P&L is mostly guesses, so margin per order cannot be trusted.","Purchase / Manager","Costs tab",
      measured==null?'<span class="pill neutral">Needs you</span>':live(measured>=0.6,"Live: "+Math.round(measured*100)+"% measured")],
-   ["P0","Enter the real barcode (EAN) of each product","The scan station refuses anything that does not match, so fake seed barcodes block real scanning.","Costs tab",
+   ["P0","Stick the real barcode on each product and enter its number","The scanner only accepts the right product. Without this, picking cannot be checked.","Inventory lead","Costs tab",
      live(fake===0,"Live: "+fake+" missing or seed")],
-   ["P0","Run lock-down.sql and switch off email sign-ups","Without it, customer names, phones and addresses are readable by anyone with the public key.","Supabase",'<span class="pill warn">Needs you</span>'],
-   ["P0","Re-run the latest costs.sql","Adds price snapshots, write-off-aware stock and the hardened checkout.","Supabase",'<span class="pill warn">Needs you</span>'],
-   ["P1","Fix every negative shelf","A negative shelf proves an inbound scan was missed, so every stock number built on it is wrong.","Scan failures",live(neg===0,"Live: "+neg+" negative")],
-   ["P1","Scan every pick before Hand to rider","Unscanned dispatches are the main source of silent stock loss.","Orders",'<span class="pill good">Enforced</span>'],
-   ["P1","Reorder the SKUs flagged Order now","Stock-outs lose the sale and the basket.","Movers & reorder",live(orderNow===0,"Live: "+orderNow+" to order")],
-   ["P1","Write off expired and damaged stock as it happens","Shows the true loss and stops the shop selling it.","Inventory",'<span class="pill neutral">Ongoing</span>'],
-   ["P2","Move slow Class C items to reserve and fast items to zone A","Shorter walks per pick, so more orders per picker.","Relocation",'<span class="pill neutral">Ongoing</span>'],
-   ["P2","Count one aisle every day","Counts find shortages the scans missed; the ledger stays honest.","Inventory",'<span class="pill neutral">Ongoing</span>'],
-   ["P3","Stop reloading every table every minute","Fine now; breaks at roughly 100k scans. Needs SQL views and incremental loading.","Code",'<span class="pill neutral">Not built</span>'],
-   ["P3","Correct demand for days a product was out of stock","Reorder quantities are understated for stocked-out items.","Code",'<span class="pill neutral">Not built</span>']
+   ["P0","Scan every item before handing the order to the rider","Wrong or missing items cause refunds and lost stock. Do not skip a scan.","Pickers","Orders",'<span class="pill good">Enforced</span>'],
+   ["P1","Put away every delivery and scan it in on the day it arrives","Unscanned deliveries show up as negative shelves and false stock-outs.","Receiving staff","Scan failures",live(neg===0,"Live: "+neg+" negative shelves")],
+   ["P1","Place the reorder for every product marked Order now","A stock-out loses the sale and the rest of the basket.","Purchase","Movers & reorder",live(orderNow===0,"Live: "+orderNow+" to order")],
+   ["P1","Check expiry dates at receipt and enter them","Batches nearest expiry must be picked first. Unrecorded dates become wastage.","Receiving staff","Inventory",'<span class="pill neutral">Ongoing</span>'],
+   ["P1","Write off damaged and expired stock the same day","The loss shows in the P&L and the shop stops selling it.","Inventory lead","Inventory",'<span class="pill neutral">Ongoing</span>'],
+   ["P1","Pick items in the order the screen shows; cold and frozen last","Keeps cold items cold and cuts spoiled deliveries.","Pickers","Orders",'<span class="pill neutral">Ongoing</span>'],
+   ["P2","Count one aisle every day and enter the count","Counts find shortages and theft early, before they grow.","Inventory lead","Inventory",'<span class="pill neutral">Ongoing</span>'],
+   ["P2","Move slow items to reserve and fast items to the front zone","Shorter walks per pick, so more orders per picker per hour.","Manager","Relocation",'<span class="pill neutral">Ongoing</span>'],
+   ["P2","Review loss-making orders weekly and fix the cause","Usually small baskets, long distance, or heavy discounts. Adjust delivery fee or minimum basket.","Manager","P&L",'<span class="pill neutral">Weekly</span>'],
+   ["P3","Update rider pay, bag cost and rent when they change","The P&L is only as good as these numbers.","Manager","Costs tab",'<span class="pill neutral">Monthly</span>']
   ];
-  $("#actBody").innerHTML=A_.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r[0]}</b></td><td>${r[1]}</td><td class="small">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join("");
+  $("#actBody").innerHTML=A_.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r[0]}</b></td><td>${r[1]}</td><td class="small">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td></tr>`).join("");
 }
 function focusSlot(code){
   MAP.sel=code; if(location.hash!=="#map"){ location.hash="#map"; } else renderMap();
